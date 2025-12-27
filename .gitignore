@@ -1,0 +1,27 @@
+# Transient/cache files
+.DS_Store
+*.jsonl
+history.jsonl
+stats-cache.json
+
+# Local settings (may contain secrets)
+settings.local.json
+local/
+
+# Cache directories
+file-history/
+image-cache/
+shell-snapshots/
+statsig/
+debug/
+backups/
+
+# Project-specific data
+projects/
+todos/
+
+# Plugins (managed separately)
+plugins/
+
+# IDE integration
+ide/
