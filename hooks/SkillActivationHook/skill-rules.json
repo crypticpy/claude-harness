@@ -5,30 +5,35 @@
     "session-management": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "critical",
-      "description": "Complete session-based development workflow for implementation tasks",
+      "priority": "high",
+      "description": "Complete session-based development workflow for complex multi-phase implementation tasks",
       "promptTriggers": {
         "keywords": [
-          "feature",
-          "implement",
-          "build",
-          "create",
-          "add feature",
-          "bug fix",
-          "refactor",
-          "refactoring",
           "multi-step",
+          "multi-phase",
           "complex task",
-          "development workflow",
-          "session",
-          "implementation"
+          "complex feature",
+          "development session",
+          "start session",
+          "new session",
+          "implementation plan",
+          "phased implementation",
+          "architectural change"
         ],
         "intentPatterns": [
-          "(implement|build|create|add).*?(feature|functionality|component)",
-          "(fix|resolve|debug).*?(bug|issue|error)",
-          "(refactor|restructure|reorganize).*?(code|codebase|architecture)",
-          "multi[- ]step.*?(task|implementation|work)",
-          "(start|begin).*?(session|work|implementation)"
+          "multi[- ](step|phase|part).*?(task|implementation|work|feature)",
+          "(start|begin|create).*?(session|development workflow)",
+          "(complex|large|major).*?(feature|refactor|implementation)",
+          "(plan|design).*?(implementation|architecture|system)",
+          "(phased|staged).*?(rollout|implementation|development)"
+        ],
+        "excludePatterns": [
+          "^commit",
+          "^git",
+          "^push",
+          "simple",
+          "quick",
+          "small change"
         ]
       }
     },
@@ -373,6 +378,56 @@
           "(docker|container).*?(build|run|deploy|compose)"
         ]
       }
+    },
+    "context-layer": {
+      "type": "proactive",
+      "enforcement": "suggest",
+      "priority": "high",
+      "description": "Use impact_check before editing shared files, semantic_lookup before reading complex code. Prevents breaking downstream consumers.",
+      "promptTriggers": {
+        "keywords": [
+          "edit file",
+          "edit the",
+          "modify file",
+          "modify the",
+          "change file",
+          "update file",
+          "refactor",
+          "rename function",
+          "rename class",
+          "delete function",
+          "remove function",
+          "breaking change",
+          "downstream",
+          "consumers",
+          "dependents",
+          "who uses",
+          "what calls",
+          "impact check",
+          "impact_check"
+        ],
+        "intentPatterns": [
+          "(edit|modify|change|update)\\s+(the\\s+)?(file|function|class|module|component)",
+          "(refactor|rename|delete|remove).*?(function|class|method|variable|file)",
+          "(check|find|show).*?(impact|dependents|consumers|callers)",
+          "what.*?(uses|calls|depends on|imports)",
+          "who.*?(uses|calls|imports)",
+          "(before|safe to).*?(edit|modify|change|delete)",
+          "breaking.*?(change|modification)"
+        ],
+        "excludePatterns": [
+          "^commit",
+          "^git",
+          "commit.*?change"
+        ],
+        "mcpTools": [
+          "impact_check",
+          "semantic_lookup",
+          "symbol_context",
+          "what_changed"
+        ],
+        "proactiveHint": "Consider using impact_check before editing to identify downstream consumers"
+      }
     }
   },
   "notes": {
@@ -393,7 +448,7 @@
       "priority_rationale": "Critical: sub-agent, documentation, session, forge-development | High: commits, navigation, design, infra | Medium: skills, archon, crawl-cli"
     },
     "skill_overview": {
-      "session-management": "Core workflow - triggers on implementation, features, bugs, refactoring",
+      "session-management": "Complex multi-phase work - triggers on multi-step tasks, phased implementations, architectural changes (NOT simple features/commits)",
       "sub-agent-invocation": "Critical coordination - triggers before ANY agent/Task tool usage",
       "forge-development": "Forge project - triggers on Rust, Tauri, crates, event bus, agent orchestration",
       "git-commits": "Version control - triggers on commits, pushes, session completion",
@@ -404,7 +459,8 @@
       "crawl-cli": "Web crawling - triggers on site crawling, content extraction, documentation fetching",
       "analytics": "Analytics integration - triggers on Umami, tracking, events, conversions",
       "documentation-research": "Library docs - triggers on documentation requests, Context7, API references",
-      "infra-ops": "Infrastructure - triggers on VPS, SSH, Docker, deployments, server management"
+      "infra-ops": "Infrastructure - triggers on VPS, SSH, Docker, deployments, server management",
+      "context-layer": "PROACTIVE - triggers on file edits to suggest impact_check for finding downstream consumers before breaking changes"
     }
   }
 }

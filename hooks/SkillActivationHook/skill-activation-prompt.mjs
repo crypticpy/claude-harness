@@ -98,6 +98,17 @@ async function main() {
                 continue;
             }
 
+            // Check exclude patterns first - if any match, skip this skill
+            if (triggers.excludePatterns) {
+                const excluded = triggers.excludePatterns.some(pattern => {
+                    const regex = new RegExp(pattern, 'i');
+                    return regex.test(prompt);
+                });
+                if (excluded) {
+                    continue;
+                }
+            }
+
             // Keyword matching
             if (triggers.keywords) {
                 const keywordMatch = triggers.keywords.some(kw =>
@@ -152,6 +163,21 @@ async function main() {
             if (low.length > 0) {
                 output += '📌 OPTIONAL SKILLS:\n';
                 low.forEach(s => output += `  → ${s.name}\n`);
+                output += '\n';
+            }
+
+            // Show proactive hints for skills that have them
+            const proactiveSkills = matchedSkills.filter(s =>
+                s.config.type === 'proactive' && s.config.promptTriggers?.proactiveHint
+            );
+            if (proactiveSkills.length > 0) {
+                output += '💡 PROACTIVE HINTS:\n';
+                proactiveSkills.forEach(s => {
+                    output += `  ${s.config.promptTriggers.proactiveHint}\n`;
+                    if (s.config.promptTriggers.mcpTools) {
+                        output += `  Tools: ${s.config.promptTriggers.mcpTools.join(', ')}\n`;
+                    }
+                });
                 output += '\n';
             }
 
