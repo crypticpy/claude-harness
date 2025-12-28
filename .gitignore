@@ -20,8 +20,5 @@ backups/
 projects/
 todos/
 
-# Plugins (managed separately)
-plugins/
-
 # IDE integration
 ide/
