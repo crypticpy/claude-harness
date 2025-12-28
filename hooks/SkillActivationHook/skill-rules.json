@@ -383,7 +383,7 @@
       "type": "proactive",
       "enforcement": "suggest",
       "priority": "high",
-      "description": "Use impact_check before editing shared files, semantic_lookup before reading complex code. Prevents breaking downstream consumers.",
+      "description": "Use impact_check before editing, semantic_lookup for exploration, brain_search for recalling patterns. Proactive context gathering.",
       "promptTriggers": {
         "keywords": [
           "edit file",
@@ -404,7 +404,22 @@
           "who uses",
           "what calls",
           "impact check",
-          "impact_check"
+          "impact_check",
+          "explore",
+          "exploration",
+          "investigate",
+          "investigation",
+          "understand",
+          "how does",
+          "how do",
+          "trace",
+          "follow",
+          "dig into",
+          "look into",
+          "research",
+          "analyze codebase",
+          "Explore agent",
+          "exploration agent"
         ],
         "intentPatterns": [
           "(edit|modify|change|update)\\s+(the\\s+)?(file|function|class|module|component)",
@@ -413,7 +428,12 @@
           "what.*?(uses|calls|depends on|imports)",
           "who.*?(uses|calls|imports)",
           "(before|safe to).*?(edit|modify|change|delete)",
-          "breaking.*?(change|modification)"
+          "breaking.*?(change|modification)",
+          "(explore|investigate|understand|analyze).*?(code|codebase|file|function|system|architecture)",
+          "(how does|how do).*?(work|function|operate)",
+          "(trace|follow|dig into|look into).*?(code|flow|logic|implementation)",
+          "(launch|use|invoke).*?(explore|exploration).*?agent",
+          "(research|understand).*?(pattern|convention|approach)"
         ],
         "excludePatterns": [
           "^commit",
@@ -424,9 +444,10 @@
           "impact_check",
           "semantic_lookup",
           "symbol_context",
-          "what_changed"
+          "what_changed",
+          "brain_search"
         ],
-        "proactiveHint": "Consider using impact_check before editing to identify downstream consumers"
+        "proactiveHint": "Use semantic_lookup for file summaries, impact_check before edits, brain_search for recalled patterns"
       }
     }
   },
