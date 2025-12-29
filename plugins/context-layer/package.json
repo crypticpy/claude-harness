@@ -1,0 +1,69 @@
+{
+  "name": "@anthropic/context-layer",
+  "version": "0.1.0",
+  "description": "Intelligent Context Layer for Claude Code - semantic file summaries, impact analysis, and context health monitoring",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "plugin",
+    "context",
+    "lsp",
+    "code-intelligence"
+  ],
+  "author": "Auto-Claude",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "glob": "^11.0.0",
+    "crypto": "^1.0.1",
+    "proper-lockfile": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "typescript": "^5.7.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "claude-plugin": {
+    "name": "context-layer",
+    "displayName": "Intelligent Context Layer",
+    "description": "Provides semantic file summaries, impact analysis, symbol context, and context health monitoring",
+    "version": "0.1.0",
+    "tools": [
+      {
+        "name": "semantic_lookup",
+        "description": "Get file summaries before reading full content"
+      },
+      {
+        "name": "impact_check",
+        "description": "Check what breaks before modifying code"
+      },
+      {
+        "name": "symbol_context",
+        "description": "Get type info and documentation for any symbol"
+      },
+      {
+        "name": "chunk_ref",
+        "description": "Reference already-read code without re-reading"
+      }
+    ],
+    "hooks": [
+      {
+        "event": "UserPromptSubmit",
+        "handler": "hooks/personality"
+      }
+    ]
+  }
+}

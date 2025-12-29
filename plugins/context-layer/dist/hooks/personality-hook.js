@@ -40,6 +40,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleUserPromptSubmit = handleUserPromptSubmit;
+exports.findProjectRoot = findProjectRoot;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const crypto = __importStar(require("crypto"));
@@ -308,7 +309,35 @@ function formatBrainContext(brain, projectPath) {
     if (stack.database)
         stackParts.push(stack.database);
     if (stackParts.length > 0) {
-        lines.push(`Stack: ${stackParts.join(', ')}`);
+        // Include project type if detected
+        const projectTypeLabel = stack.projectType && stack.projectType !== 'unknown'
+            ? ` [${formatProjectType(stack.projectType)}]`
+            : '';
+        lines.push(`Stack: ${stackParts.join(', ')}${projectTypeLabel}`);
+    }
+    // Show hybrid stack details if detected
+    if (stack.isHybridStack && stack.hybridDetails) {
+        lines.push(`Architecture: ${stack.hybridDetails}`);
+    }
+    // Show monorepo type if detected
+    if (stack.monorepoType && stack.monorepoType !== 'none') {
+        lines.push(`Workspace: ${formatMonorepoType(stack.monorepoType)}`);
+    }
+    // Show ML/AI stack details if detected
+    if (stack.mlStack) {
+        const mlParts = [];
+        if (stack.mlStack.frameworks.length > 0) {
+            mlParts.push(`ML: ${stack.mlStack.frameworks.join(', ')}`);
+        }
+        if (stack.mlStack.dataLibs.length > 0) {
+            mlParts.push(`Data: ${stack.mlStack.dataLibs.join(', ')}`);
+        }
+        if (stack.mlStack.notebooks) {
+            mlParts.push('Jupyter notebooks');
+        }
+        if (mlParts.length > 0) {
+            lines.push(mlParts.join(' | '));
+        }
     }
     // Critical lessons (high severity only)
     const criticalLessons = brain.lessons
@@ -401,6 +430,75 @@ function markSessionInjected(projectPath, sessionId) {
     }
 }
 // =============================================================================
+// Compaction Recovery
+// =============================================================================
+/**
+ * Check for and retrieve compaction recovery context.
+ * Returns recovery context string if we just recovered from compaction.
+ */
+function checkCompactionRecoveryContext(projectPath, sessionId) {
+    const PRE_COMPACTION_FILE = 'pre-compaction-save.json';
+    const COMPACTION_SAVE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    const savePath = path.join(projectPath, '.claude', 'context-layer', PRE_COMPACTION_FILE);
+    if (!fs.existsSync(savePath)) {
+        return null;
+    }
+    try {
+        const content = fs.readFileSync(savePath, 'utf-8');
+        const save = JSON.parse(content);
+        // Check if save is recent enough
+        const saveAge = Date.now() - new Date(save.savedAt).getTime();
+        if (saveAge > COMPACTION_SAVE_TTL_MS) {
+            // Too old, clean it up
+            fs.unlinkSync(savePath);
+            return null;
+        }
+        // Only recover if session IDs match or it's very recent
+        const isVeryRecent = saveAge < 60 * 1000; // Less than 1 minute
+        const sameSession = save.sessionId === sessionId;
+        if (!isVeryRecent && !sameSession) {
+            // Old or different session, clear it
+            fs.unlinkSync(savePath);
+            return null;
+        }
+        // Build recovery context
+        const lines = [
+            '<session-recovery>',
+            'Context was recently compacted. Resuming from saved state:',
+            '',
+        ];
+        if (save.workingSummary) {
+            lines.push(`**What you were working on:**`);
+            lines.push(save.workingSummary);
+            lines.push('');
+        }
+        if (save.workingFiles && save.workingFiles.length > 0) {
+            lines.push(`**Key files:** ${save.workingFiles.slice(-5).join(', ')}`);
+        }
+        if (save.sessionLessons && save.sessionLessons.length > 0) {
+            lines.push('');
+            lines.push('**Recent learnings:**');
+            for (const lesson of save.sessionLessons.slice(-3)) {
+                lines.push(`- ${lesson}`);
+            }
+        }
+        if (save.detectedPatterns && save.detectedPatterns.length > 0) {
+            lines.push('');
+            lines.push('**Detected patterns:**');
+            for (const pattern of save.detectedPatterns.slice(-3)) {
+                lines.push(`- ${pattern}`);
+            }
+        }
+        lines.push('</session-recovery>');
+        // Clear the save after generating recovery context
+        fs.unlinkSync(savePath);
+        return lines.join('\n');
+    }
+    catch {
+        return null;
+    }
+}
+// =============================================================================
 // Main Hook Handler
 // =============================================================================
 async function handleUserPromptSubmit(input) {
@@ -415,12 +513,18 @@ async function handleUserPromptSubmit(input) {
             // Already done for this session, skip silently
             return { continue: true };
         }
+        // CHECK: Compaction recovery (inject saved state after compaction)
+        const recoveryContext = checkCompactionRecoveryContext(projectPath, sessionId);
         // CHECK: Pre-compaction save trigger
         const preCompactionWarning = checkAndTriggerPreCompactionSave(projectPath);
         // PRIORITY 1: Check for persistent brain (Claude's accumulated knowledge)
         const brain = loadPersistentBrain(projectPath);
         if (brain && (brain.lessons.length > 0 || Object.keys(brain.fileInsights).length > 0)) {
             let context = formatBrainContext(brain, projectPath);
+            // Prepend recovery context if we just recovered from compaction
+            if (recoveryContext) {
+                context = recoveryContext + '\n\n' + context;
+            }
             if (preCompactionWarning) {
                 context = preCompactionWarning + '\n\n' + context;
             }
@@ -668,6 +772,27 @@ function extractStackInfo(projectPath) {
         stack.languages.push('Go');
         stack.buildTools.push('go');
     }
+    // ==========================================================================
+    // Enhanced Detection: ML/AI, Monorepo, Hybrid, Static
+    // ==========================================================================
+    // Detect ML/AI stack (Python projects with ML libraries)
+    const mlStack = detectMLStack(projectPath);
+    if (mlStack) {
+        stack.mlStack = mlStack;
+    }
+    // Detect monorepo type
+    const monorepoType = detectMonorepoType(projectPath);
+    if (monorepoType !== 'none') {
+        stack.monorepoType = monorepoType;
+    }
+    // Detect hybrid stack (Python+JS, Rust+Tauri, etc.)
+    const hybrid = detectHybridStack(projectPath, stack);
+    if (hybrid.isHybrid) {
+        stack.isHybridStack = true;
+        stack.hybridDetails = hybrid.details;
+    }
+    // Determine overall project type
+    stack.projectType = determineProjectType(stack, projectPath);
     return stack;
 }
 function detectFromPackageJson(pkg, stack) {
@@ -788,11 +913,388 @@ function detectFromPyproject(pyproject, stack) {
     if (pyproject.includes('[tool.uv]') || pyproject.includes('uv ='))
         stack.buildTools.push('uv');
 }
+// =============================================================================
+// Enhanced Stack Detection - ML/AI, Data Science, Static, Monorepo
+// =============================================================================
+/**
+ * ML/AI framework patterns for Python projects
+ */
+const ML_FRAMEWORKS = [
+    'tensorflow', 'torch', 'pytorch', 'keras', 'jax', 'flax',
+    'transformers', 'huggingface', 'langchain', 'openai', 'anthropic',
+    'scikit-learn', 'sklearn', 'xgboost', 'lightgbm', 'catboost',
+    'onnx', 'mlflow', 'wandb', 'optuna',
+];
+/**
+ * Data science library patterns
+ */
+const DATA_SCIENCE_LIBS = [
+    'pandas', 'numpy', 'scipy', 'polars', 'dask', 'vaex',
+];
+/**
+ * Visualization library patterns
+ */
+const VISUALIZATION_LIBS = [
+    'matplotlib', 'seaborn', 'plotly', 'altair', 'bokeh', 'holoviews',
+];
+/**
+ * Detect ML/AI stack from Python configuration files
+ */
+function detectMLStack(projectPath) {
+    const mlStack = {
+        frameworks: [],
+        dataLibs: [],
+        visualization: [],
+        notebooks: false,
+        modelDirs: [],
+    };
+    // Check requirements.txt
+    const requirementsPath = path.join(projectPath, 'requirements.txt');
+    if (fs.existsSync(requirementsPath)) {
+        try {
+            const content = fs.readFileSync(requirementsPath, 'utf-8').toLowerCase();
+            detectMLLibsFromContent(content, mlStack);
+        }
+        catch { /* skip */ }
+    }
+    // Check pyproject.toml
+    const pyprojectPath = path.join(projectPath, 'pyproject.toml');
+    if (fs.existsSync(pyprojectPath)) {
+        try {
+            const content = fs.readFileSync(pyprojectPath, 'utf-8').toLowerCase();
+            detectMLLibsFromContent(content, mlStack);
+        }
+        catch { /* skip */ }
+    }
+    // Check for Jupyter notebooks
+    try {
+        const files = fs.readdirSync(projectPath);
+        if (files.some(f => f.endsWith('.ipynb'))) {
+            mlStack.notebooks = true;
+        }
+        // Also check notebooks/ directory
+        const notebooksDir = path.join(projectPath, 'notebooks');
+        if (fs.existsSync(notebooksDir) && fs.statSync(notebooksDir).isDirectory()) {
+            const nbFiles = fs.readdirSync(notebooksDir);
+            if (nbFiles.some(f => f.endsWith('.ipynb'))) {
+                mlStack.notebooks = true;
+            }
+        }
+    }
+    catch { /* skip */ }
+    // Check for common ML directories
+    const mlDirs = ['models', 'training', 'datasets', 'data', 'checkpoints', 'weights'];
+    for (const dir of mlDirs) {
+        const dirPath = path.join(projectPath, dir);
+        if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+            mlStack.modelDirs.push(dir);
+        }
+    }
+    // Only return if we found ML-related content
+    const hasMLContent = mlStack.frameworks.length > 0 ||
+        mlStack.dataLibs.length > 0 ||
+        mlStack.visualization.length > 0 ||
+        mlStack.notebooks ||
+        mlStack.modelDirs.length > 0;
+    return hasMLContent ? mlStack : null;
+}
+/**
+ * Helper to detect ML libraries from file content
+ */
+function detectMLLibsFromContent(content, mlStack) {
+    for (const lib of ML_FRAMEWORKS) {
+        if (content.includes(lib)) {
+            mlStack.frameworks.push(lib);
+        }
+    }
+    for (const lib of DATA_SCIENCE_LIBS) {
+        if (content.includes(lib)) {
+            mlStack.dataLibs.push(lib);
+        }
+    }
+    for (const lib of VISUALIZATION_LIBS) {
+        if (content.includes(lib)) {
+            mlStack.visualization.push(lib);
+        }
+    }
+}
+/**
+ * Detect monorepo workspace configuration
+ */
+function detectMonorepoType(projectPath) {
+    // Lerna
+    if (fs.existsSync(path.join(projectPath, 'lerna.json'))) {
+        return 'lerna';
+    }
+    // pnpm workspace
+    if (fs.existsSync(path.join(projectPath, 'pnpm-workspace.yaml'))) {
+        return 'pnpm-workspace';
+    }
+    // Turborepo
+    if (fs.existsSync(path.join(projectPath, 'turbo.json'))) {
+        return 'turborepo';
+    }
+    // Nx
+    if (fs.existsSync(path.join(projectPath, 'nx.json'))) {
+        return 'nx';
+    }
+    // Cargo workspace
+    const cargoPath = path.join(projectPath, 'Cargo.toml');
+    if (fs.existsSync(cargoPath)) {
+        try {
+            const cargo = fs.readFileSync(cargoPath, 'utf-8');
+            if (cargo.includes('[workspace]')) {
+                return 'cargo-workspace';
+            }
+        }
+        catch { /* skip */ }
+    }
+    // npm/yarn workspaces via package.json
+    const packageJsonPath = path.join(projectPath, 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+        try {
+            const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+            if (pkg.workspaces) {
+                // Check for yarn.lock to differentiate
+                if (fs.existsSync(path.join(projectPath, 'yarn.lock'))) {
+                    return 'yarn-workspaces';
+                }
+                return 'npm-workspaces';
+            }
+        }
+        catch { /* skip */ }
+    }
+    return 'none';
+}
+/**
+ * Detect static HTML/CSS site (no build system)
+ */
+function detectStaticSite(projectPath) {
+    const hasIndexHtml = fs.existsSync(path.join(projectPath, 'index.html'));
+    const hasPackageJson = fs.existsSync(path.join(projectPath, 'package.json'));
+    const hasCargoToml = fs.existsSync(path.join(projectPath, 'Cargo.toml'));
+    const hasPyproject = fs.existsSync(path.join(projectPath, 'pyproject.toml'));
+    const hasRequirements = fs.existsSync(path.join(projectPath, 'requirements.txt'));
+    // Static site: has index.html but NO build system indicators
+    if (hasIndexHtml && !hasPackageJson && !hasCargoToml && !hasPyproject && !hasRequirements) {
+        // Additional check: no common build config files
+        const buildConfigs = ['webpack.config.js', 'vite.config.js', 'vite.config.ts',
+            'rollup.config.js', 'gulpfile.js', 'Gruntfile.js'];
+        const hasBuildConfig = buildConfigs.some(f => fs.existsSync(path.join(projectPath, f)));
+        return !hasBuildConfig;
+    }
+    return false;
+}
+/**
+ * Detect hybrid stack (e.g., Python backend + JS frontend, Rust + Tauri)
+ */
+function detectHybridStack(_projectPath, stack) {
+    const hasPython = stack.languages.includes('Python');
+    const hasJS = stack.languages.includes('JavaScript') || stack.languages.includes('TypeScript');
+    const hasRust = stack.languages.includes('Rust');
+    const hasTauri = stack.frameworks.includes('Tauri');
+    const hasElectron = stack.frameworks.includes('Electron');
+    // Rust + Tauri (dual stack: Rust backend + JS/TS frontend)
+    if (hasRust && hasTauri && hasJS) {
+        return { isHybrid: true, details: 'Rust + Tauri (Rust backend, TypeScript/React frontend)' };
+    }
+    // Rust + Electron (less common but possible)
+    if (hasRust && hasElectron && hasJS) {
+        return { isHybrid: true, details: 'Rust + Electron (Rust native modules, JS frontend)' };
+    }
+    // Python + JavaScript (common: FastAPI/Django backend + React/Vue frontend)
+    if (hasPython && hasJS) {
+        const pyFramework = stack.frameworks.find(f => ['FastAPI', 'Django', 'Flask'].includes(f)) || 'Python';
+        const jsFramework = stack.frameworks.find(f => ['React', 'Vue', 'Svelte', 'Next.js'].includes(f)) || 'JavaScript';
+        return { isHybrid: true, details: `${pyFramework} backend + ${jsFramework} frontend` };
+    }
+    return { isHybrid: false, details: '' };
+}
+/**
+ * Determine project type from detected stack information
+ */
+function determineProjectType(stack, projectPath) {
+    // Check for monorepo first (takes precedence)
+    if (stack.monorepoType && stack.monorepoType !== 'none') {
+        return 'monorepo';
+    }
+    // Check for ML/AI project
+    if (stack.mlStack) {
+        if (stack.mlStack.frameworks.length > 0) {
+            return 'ml-ai';
+        }
+        // Data science if only data libs and visualization
+        if (stack.mlStack.dataLibs.length > 0 || stack.mlStack.visualization.length > 0) {
+            return 'data-science';
+        }
+    }
+    // Check for static site
+    if (detectStaticSite(projectPath)) {
+        return 'static-site';
+    }
+    // Check for desktop app
+    if (stack.frameworks.some(f => ['Electron', 'Tauri'].includes(f))) {
+        return 'desktop-app';
+    }
+    // Check for mobile app
+    if (stack.frameworks.some(f => ['React Native', 'Flutter', 'Expo'].includes(f))) {
+        return 'mobile-app';
+    }
+    // Check for CLI tool (Rust or Go with specific patterns)
+    const hasRustCli = stack.languages.includes('Rust') &&
+        stack.frameworks.some(f => ['clap', 'structopt'].includes(f.toLowerCase()));
+    const hasGoCli = stack.languages.includes('Go') &&
+        !stack.frameworks.some(f => ['Gin', 'Echo', 'Fiber'].includes(f));
+    if (hasRustCli || hasGoCli) {
+        return 'cli-tool';
+    }
+    // Web classification
+    const hasBackend = stack.frameworks.some(f => ['Express', 'Fastify', 'NestJS', 'FastAPI', 'Django', 'Flask', 'Actix', 'Axum', 'Rocket', 'Gin', 'Echo'].includes(f));
+    const hasFrontend = stack.frameworks.some(f => ['React', 'Vue', 'Svelte', 'Next.js', 'Nuxt', 'Angular'].includes(f));
+    if (hasBackend && hasFrontend) {
+        return 'web-fullstack';
+    }
+    if (hasBackend) {
+        return 'web-backend';
+    }
+    if (hasFrontend) {
+        return 'web-frontend';
+    }
+    // Check for library (has main export but no app entry point)
+    const packageJsonPath = path.join(projectPath, 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+        try {
+            const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+            if (pkg.main || pkg.exports || pkg.module) {
+                // Likely a library if it has exports but no "start" script
+                if (!pkg.scripts?.start && !pkg.scripts?.dev) {
+                    return 'library';
+                }
+            }
+        }
+        catch { /* skip */ }
+    }
+    return 'unknown';
+}
+/**
+ * Find the project root by walking up the directory tree
+ * Handles nested repos and monorepo sub-packages
+ * Exported for use by other modules (e.g., active indexer, session state)
+ */
+function findProjectRoot(startPath) {
+    // First, check CLAUDE_PROJECT_DIR environment variable
+    const envProjectDir = process.env.CLAUDE_PROJECT_DIR;
+    if (envProjectDir && fs.existsSync(envProjectDir)) {
+        return envProjectDir;
+    }
+    // Walk up directory tree looking for project markers
+    const projectMarkers = [
+        '.git', // Git repository root
+        'package.json', // Node.js project
+        'Cargo.toml', // Rust project
+        'pyproject.toml', // Python project
+        'go.mod', // Go project
+        'pom.xml', // Maven project
+        'build.gradle', // Gradle project
+        'CLAUDE.md', // Claude Code project marker
+    ];
+    // Monorepo markers (take precedence as root)
+    const monorepoMarkers = [
+        'lerna.json',
+        'pnpm-workspace.yaml',
+        'turbo.json',
+        'nx.json',
+    ];
+    let currentPath = path.resolve(startPath);
+    const rootPath = path.parse(currentPath).root;
+    let foundProjectRoot = null;
+    let foundMonorepoRoot = null;
+    while (currentPath !== rootPath) {
+        // Check for monorepo markers first (takes precedence)
+        for (const marker of monorepoMarkers) {
+            if (fs.existsSync(path.join(currentPath, marker))) {
+                foundMonorepoRoot = currentPath;
+                break;
+            }
+        }
+        // Check for Cargo.toml with [workspace] (Rust monorepo)
+        const cargoPath = path.join(currentPath, 'Cargo.toml');
+        if (fs.existsSync(cargoPath)) {
+            try {
+                const cargo = fs.readFileSync(cargoPath, 'utf-8');
+                if (cargo.includes('[workspace]')) {
+                    foundMonorepoRoot = currentPath;
+                }
+            }
+            catch { /* skip */ }
+        }
+        // Check for package.json with workspaces
+        const packageJsonPath = path.join(currentPath, 'package.json');
+        if (fs.existsSync(packageJsonPath)) {
+            try {
+                const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                if (pkg.workspaces) {
+                    foundMonorepoRoot = currentPath;
+                }
+            }
+            catch { /* skip */ }
+        }
+        // Check for regular project markers (if no monorepo found yet)
+        if (!foundProjectRoot) {
+            for (const marker of projectMarkers) {
+                if (fs.existsSync(path.join(currentPath, marker))) {
+                    foundProjectRoot = currentPath;
+                    // Don't break - keep looking for potential monorepo root
+                    break;
+                }
+            }
+        }
+        currentPath = path.dirname(currentPath);
+    }
+    // Prefer monorepo root if found, otherwise use project root, fallback to start path
+    return foundMonorepoRoot || foundProjectRoot || startPath;
+}
 function asRecord(value) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
         return value;
     }
     return {};
+}
+/**
+ * Format project type for display
+ */
+function formatProjectType(type) {
+    const labels = {
+        'ml-ai': 'ML/AI',
+        'data-science': 'Data Science',
+        'web-fullstack': 'Full-Stack Web',
+        'web-frontend': 'Frontend',
+        'web-backend': 'Backend/API',
+        'static-site': 'Static Site',
+        'desktop-app': 'Desktop App',
+        'mobile-app': 'Mobile App',
+        'cli-tool': 'CLI Tool',
+        'library': 'Library',
+        'monorepo': 'Monorepo',
+        'unknown': 'Unknown',
+    };
+    return labels[type] || type;
+}
+/**
+ * Format monorepo type for display
+ */
+function formatMonorepoType(type) {
+    const labels = {
+        'lerna': 'Lerna monorepo',
+        'pnpm-workspace': 'pnpm workspace',
+        'npm-workspaces': 'npm workspaces',
+        'yarn-workspaces': 'Yarn workspaces',
+        'turborepo': 'Turborepo',
+        'nx': 'Nx workspace',
+        'cargo-workspace': 'Cargo workspace',
+        'none': '',
+    };
+    return labels[type] || type;
 }
 // =============================================================================
 // Pattern Extraction
