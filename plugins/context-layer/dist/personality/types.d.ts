@@ -27,11 +27,14 @@ export interface StackInfo {
     monorepoType?: MonorepoType;
     isHybridStack?: boolean;
     hybridDetails?: string;
+    backendServices?: string[];
+    uiLibrary?: string;
+    audioDsp?: AudioDspInfo;
 }
 /**
  * High-level project type classification
  */
-export type ProjectType = 'ml-ai' | 'data-science' | 'web-fullstack' | 'web-frontend' | 'web-backend' | 'static-site' | 'desktop-app' | 'mobile-app' | 'cli-tool' | 'library' | 'monorepo' | 'unknown';
+export type ProjectType = 'ml-ai' | 'data-science' | 'web-fullstack' | 'web-frontend' | 'web-backend' | 'static-site' | 'desktop-app' | 'mobile-app' | 'cli-tool' | 'library' | 'monorepo' | 'audio-dsp' | 'unknown';
 /**
  * ML/AI specific stack information
  */
@@ -46,6 +49,16 @@ export interface MLStackInfo {
  * Monorepo workspace type
  */
 export type MonorepoType = 'lerna' | 'pnpm-workspace' | 'npm-workspaces' | 'yarn-workspaces' | 'turborepo' | 'nx' | 'cargo-workspace' | 'none';
+/**
+ * Audio/DSP specific stack information
+ */
+export interface AudioDspInfo {
+    type: 'plugin' | 'web-audio' | 'native' | 'embedded';
+    formats?: string[];
+    frameworks?: string[];
+    languages: string[];
+    realtime: boolean;
+}
 export interface Pattern {
     name: string;
     description: string;

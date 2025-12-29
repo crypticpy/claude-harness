@@ -30,6 +30,12 @@ export interface StackInfo {
   monorepoType?: MonorepoType;
   isHybridStack?: boolean;
   hybridDetails?: string;
+  // Backend services (BaaS, PaaS)
+  backendServices?: string[];
+  // UI component libraries
+  uiLibrary?: string;
+  // Audio/DSP specific
+  audioDsp?: AudioDspInfo;
 }
 
 /**
@@ -47,6 +53,7 @@ export type ProjectType =
   | 'cli-tool'        // Command line tool
   | 'library'         // Reusable library/package
   | 'monorepo'        // Multi-package workspace
+  | 'audio-dsp'       // Audio DSP / plugin development
   | 'unknown';
 
 /**
@@ -72,6 +79,17 @@ export type MonorepoType =
   | 'nx'
   | 'cargo-workspace'
   | 'none';
+
+/**
+ * Audio/DSP specific stack information
+ */
+export interface AudioDspInfo {
+  type: 'plugin' | 'web-audio' | 'native' | 'embedded';
+  formats?: string[];      // VST3, AU, CLAP, AAX, LV2
+  frameworks?: string[];   // JUCE, iPlug2, DPF, web-audio-api
+  languages: string[];     // Rust, C++, C, WASM
+  realtime: boolean;       // Real-time audio processing
+}
 
 export interface Pattern {
   name: string;

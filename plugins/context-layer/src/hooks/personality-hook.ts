@@ -19,6 +19,7 @@ import type {
   MLStackInfo,
   MonorepoType,
 } from '../personality/types';
+// AudioDspInfo is used via StackInfo.audioDsp property type
 import { createStorage, computeProjectHash } from '../storage';
 import type { ContextStorage, ProjectProfile } from '../storage';
 
@@ -377,43 +378,11 @@ function formatBrainContext(brain: PersistentBrain, projectPath: string): string
     lines.push('');
   }
 
-  // Stack detection (still do this dynamically)
+  // Stack detection - tight summary (~50 tokens)
   const stack = extractStackInfo(projectPath);
-  const stackParts: string[] = [...stack.languages, ...stack.frameworks];
-  if (stack.database) stackParts.push(stack.database);
-  if (stackParts.length > 0) {
-    // Include project type if detected
-    const projectTypeLabel = stack.projectType && stack.projectType !== 'unknown'
-      ? ` [${formatProjectType(stack.projectType)}]`
-      : '';
-    lines.push(`Stack: ${stackParts.join(', ')}${projectTypeLabel}`);
-  }
-
-  // Show hybrid stack details if detected
-  if (stack.isHybridStack && stack.hybridDetails) {
-    lines.push(`Architecture: ${stack.hybridDetails}`);
-  }
-
-  // Show monorepo type if detected
-  if (stack.monorepoType && stack.monorepoType !== 'none') {
-    lines.push(`Workspace: ${formatMonorepoType(stack.monorepoType)}`);
-  }
-
-  // Show ML/AI stack details if detected
-  if (stack.mlStack) {
-    const mlParts: string[] = [];
-    if (stack.mlStack.frameworks.length > 0) {
-      mlParts.push(`ML: ${stack.mlStack.frameworks.join(', ')}`);
-    }
-    if (stack.mlStack.dataLibs.length > 0) {
-      mlParts.push(`Data: ${stack.mlStack.dataLibs.join(', ')}`);
-    }
-    if (stack.mlStack.notebooks) {
-      mlParts.push('Jupyter notebooks');
-    }
-    if (mlParts.length > 0) {
-      lines.push(mlParts.join(' | '));
-    }
+  const summary = generateTightStackSummary(stack);
+  if (summary) {
+    lines.push(summary);
   }
 
   // Critical lessons (high severity only)
@@ -927,6 +896,16 @@ function extractStackInfo(projectPath: string): StackInfo {
     stack.buildTools.push('go');
   }
 
+  // Detect from Gemfile (Ruby/Rails)
+  const gemfilePath = path.join(projectPath, 'Gemfile');
+  if (fs.existsSync(gemfilePath)) {
+    stack.languages.push('Ruby');
+    try {
+      const gemfile = fs.readFileSync(gemfilePath, 'utf-8');
+      detectFromGemfile(gemfile, stack);
+    } catch { /* skip */ }
+  }
+
   // ==========================================================================
   // Enhanced Detection: ML/AI, Monorepo, Hybrid, Static
   // ==========================================================================
@@ -996,13 +975,47 @@ function detectFromPackageJson(pkg: Record<string, unknown>, stack: StackInfo): 
   if (deps['@emotion/react']) stack.styling = 'Emotion';
   if (deps['sass']) stack.styling = 'Sass';
 
-  // Database
+  // Database / ORM
   if (deps['prisma'] || deps['@prisma/client']) stack.database = 'Prisma';
   if (deps['drizzle-orm']) stack.database = 'Drizzle';
-  if (deps['@supabase/supabase-js']) stack.database = 'Supabase';
   if (deps['mongoose']) stack.database = 'MongoDB';
   if (deps['pg']) stack.database = 'PostgreSQL';
   if (deps['better-sqlite3']) stack.database = 'SQLite';
+  if (deps['typeorm']) stack.database = 'TypeORM';
+
+  // Backend Services (BaaS/PaaS)
+  const services: string[] = [];
+  if (deps['@supabase/supabase-js'] || deps['@supabase/ssr']) services.push('Supabase');
+  if (deps['firebase'] || deps['firebase-admin'] || deps['@firebase/app']) services.push('Firebase');
+  if (deps['@railway/cli']) services.push('Railway');
+  if (deps['@vercel/kv'] || deps['@vercel/postgres'] || deps['@vercel/blob']) services.push('Vercel');
+  if (deps['@upstash/redis'] || deps['@upstash/ratelimit']) services.push('Upstash');
+  if (deps['@planetscale/database']) services.push('PlanetScale');
+  if (deps['@neondatabase/serverless']) services.push('Neon');
+  if (services.length > 0) stack.backendServices = services;
+
+  // UI Component Libraries
+  if (deps['@mui/material'] || deps['@material-ui/core']) stack.uiLibrary = 'Material UI';
+  else if (deps['@mantine/core']) stack.uiLibrary = 'Mantine';
+  else if (deps['@chakra-ui/react']) stack.uiLibrary = 'Chakra UI';
+  else if (deps['@radix-ui/themes'] || hasMultipleRadixPrimitives(deps)) {
+    // ShadCN uses Radix primitives but doesn't have its own package
+    stack.uiLibrary = deps['class-variance-authority'] ? 'ShadCN' : 'Radix';
+  }
+  else if (deps['antd']) stack.uiLibrary = 'Ant Design';
+  else if (deps['@headlessui/react']) stack.uiLibrary = 'Headless UI';
+
+  // Audio/DSP (Web Audio)
+  if (deps['tone'] || deps['howler'] || deps['pizzicato']) {
+    stack.audioDsp = {
+      type: 'web-audio',
+      frameworks: [],
+      languages: ['TypeScript', 'JavaScript'],
+      realtime: true,
+    };
+    if (deps['tone']) stack.audioDsp.frameworks!.push('Tone.js');
+    if (deps['howler']) stack.audioDsp.frameworks!.push('Howler.js');
+  }
 
   // Build tools
   if (deps['vite']) stack.buildTools.push('Vite');
@@ -1011,6 +1024,16 @@ function detectFromPackageJson(pkg: Record<string, unknown>, stack: StackInfo): 
   if (deps['turbo']) stack.buildTools.push('Turborepo');
 
   // Note: Package manager detection would need projectPath - skip for now
+}
+
+/**
+ * Check if project has multiple Radix UI primitives (indicates ShadCN/Radix usage)
+ */
+function hasMultipleRadixPrimitives(deps: Record<string, unknown>): boolean {
+  const radixPackages = Object.keys(deps).filter(k =>
+    k.startsWith('@radix-ui/react-') || k.startsWith('@radix-ui/primitive')
+  );
+  return radixPackages.length >= 3; // ShadCN typically uses many primitives
 }
 
 function detectFromCargoToml(cargo: string, stack: StackInfo): void {
@@ -1023,6 +1046,36 @@ function detectFromCargoToml(cargo: string, stack: StackInfo): void {
   if (cargo.includes('sqlx')) stack.database = 'SQLx';
   if (cargo.includes('diesel')) stack.database = 'Diesel';
   if (cargo.includes('rusqlite')) stack.database = 'SQLite';
+
+  // Audio/DSP crates
+  const hasAudio = cargo.includes('cpal') || cargo.includes('rodio') ||
+    cargo.includes('dasp') || cargo.includes('fundsp') ||
+    cargo.includes('vst') || cargo.includes('clap-sys') ||
+    cargo.includes('nih_plug') || cargo.includes('baseplug');
+
+  if (hasAudio) {
+    const formats: string[] = [];
+    const frameworks: string[] = [];
+
+    if (cargo.includes('vst')) formats.push('VST3');
+    if (cargo.includes('clap')) formats.push('CLAP');
+    if (cargo.includes('nih_plug')) {
+      frameworks.push('nih-plug');
+      formats.push('VST3', 'CLAP');
+    }
+    if (cargo.includes('baseplug')) frameworks.push('baseplug');
+    if (cargo.includes('cpal')) frameworks.push('cpal');
+    if (cargo.includes('rodio')) frameworks.push('rodio');
+    if (cargo.includes('fundsp')) frameworks.push('FunDSP');
+
+    stack.audioDsp = {
+      type: formats.length > 0 ? 'plugin' : 'native',
+      formats: formats.length > 0 ? [...new Set(formats)] : undefined,
+      frameworks,
+      languages: ['Rust'],
+      realtime: true,
+    };
+  }
 }
 
 function detectFromPyproject(pyproject: string, stack: StackInfo): void {
@@ -1036,6 +1089,31 @@ function detectFromPyproject(pyproject: string, stack: StackInfo): void {
   // Build tools
   if (pyproject.includes('[tool.poetry]')) stack.buildTools.push('Poetry');
   if (pyproject.includes('[tool.uv]') || pyproject.includes('uv =')) stack.buildTools.push('uv');
+}
+
+function detectFromGemfile(gemfile: string, stack: StackInfo): void {
+  // Rails framework
+  if (gemfile.includes("'rails'") || gemfile.includes('"rails"')) {
+    stack.frameworks.push('Rails');
+  }
+  // Sinatra (lightweight)
+  if (gemfile.includes("'sinatra'") || gemfile.includes('"sinatra"')) {
+    stack.frameworks.push('Sinatra');
+  }
+  // Testing
+  if (gemfile.includes("'rspec'") || gemfile.includes('"rspec"')) {
+    stack.testing = 'RSpec';
+  }
+  // Database
+  if (gemfile.includes("'pg'") || gemfile.includes('"pg"')) {
+    stack.database = 'PostgreSQL';
+  }
+  if (gemfile.includes("'mysql2'") || gemfile.includes('"mysql2"')) {
+    stack.database = 'MySQL';
+  }
+  if (gemfile.includes("'sqlite3'") || gemfile.includes('"sqlite3"')) {
+    stack.database = 'SQLite';
+  }
 }
 
 // =============================================================================
@@ -1295,6 +1373,11 @@ function determineProjectType(stack: StackInfo, projectPath: string): ProjectTyp
     return 'mobile-app';
   }
 
+  // Check for audio/DSP project
+  if (stack.audioDsp) {
+    return 'audio-dsp';
+  }
+
   // Check for CLI tool (Rust or Go with specific patterns)
   const hasRustCli = stack.languages.includes('Rust') &&
     stack.frameworks.some(f => ['clap', 'structopt'].includes(f.toLowerCase()));
@@ -1306,20 +1389,23 @@ function determineProjectType(stack: StackInfo, projectPath: string): ProjectTyp
 
   // Web classification
   const hasBackend = stack.frameworks.some(f =>
-    ['Express', 'Fastify', 'NestJS', 'FastAPI', 'Django', 'Flask', 'Actix', 'Axum', 'Rocket', 'Gin', 'Echo'].includes(f)
+    ['Express', 'Fastify', 'NestJS', 'FastAPI', 'Django', 'Flask', 'Actix', 'Axum', 'Rocket', 'Gin', 'Echo', 'Rails', 'Sinatra', 'Hono', 'Koa'].includes(f)
   );
+  // Also consider BaaS as backend
+  const hasBaaS = (stack.backendServices?.length ?? 0) > 0;
   const hasFrontend = stack.frameworks.some(f =>
-    ['React', 'Vue', 'Svelte', 'Next.js', 'Nuxt', 'Angular'].includes(f)
+    ['React', 'Vue', 'Svelte', 'Next.js', 'Nuxt', 'Angular', 'SvelteKit', 'Remix', 'Astro'].includes(f)
   );
 
-  if (hasBackend && hasFrontend) {
+  if ((hasBackend || hasBaaS) && hasFrontend) {
     return 'web-fullstack';
   }
   if (hasBackend) {
     return 'web-backend';
   }
   if (hasFrontend) {
-    return 'web-frontend';
+    // Frontend with BaaS is still fullstack
+    return hasBaaS ? 'web-fullstack' : 'web-frontend';
   }
 
   // Check for library (has main export but no app entry point)
@@ -1433,6 +1519,84 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
+ * Generate a tight ~50 token stack summary
+ * Format: "Stack: Framework + Backend + Styling + UI [Type]"
+ * Examples:
+ *   "Stack: Next.js + Supabase + Tailwind + ShadCN [Full-Stack Web]"
+ *   "Stack: Rust + nih-plug [Audio/DSP, VST3/CLAP]"
+ *   "Stack: Rails + PostgreSQL [Backend/API]"
+ */
+function generateTightStackSummary(stack: StackInfo): string {
+  const parts: string[] = [];
+
+  // Primary framework (pick the most significant one)
+  const primaryFramework = stack.frameworks.find(f =>
+    ['Next.js', 'Nuxt', 'SvelteKit', 'Remix', 'Astro', 'Rails', 'Django', 'FastAPI', 'Tauri', 'Electron'].includes(f)
+  ) || stack.frameworks[0];
+
+  if (primaryFramework) {
+    parts.push(primaryFramework);
+  } else if (stack.languages.length > 0) {
+    // Fallback to primary language
+    parts.push(stack.languages[0]);
+  }
+
+  // Backend service (BaaS/PaaS) or database
+  if (stack.backendServices && stack.backendServices.length > 0) {
+    parts.push(stack.backendServices[0]); // Primary service
+  } else if (stack.database && !['PostgreSQL', 'MySQL', 'SQLite'].includes(stack.database)) {
+    // Only show ORM/client, not raw DB drivers
+    parts.push(stack.database);
+  }
+
+  // Styling (if Tailwind)
+  if (stack.styling === 'Tailwind CSS') {
+    parts.push('Tailwind');
+  }
+
+  // UI Library
+  if (stack.uiLibrary) {
+    parts.push(stack.uiLibrary);
+  }
+
+  // Audio/DSP specific
+  if (stack.audioDsp) {
+    if (stack.audioDsp.frameworks && stack.audioDsp.frameworks.length > 0) {
+      parts.push(stack.audioDsp.frameworks[0]);
+    }
+  }
+
+  if (parts.length === 0) {
+    return '';
+  }
+
+  // Build the summary
+  let summary = `Stack: ${parts.join(' + ')}`;
+
+  // Add type annotation
+  const annotations: string[] = [];
+  if (stack.projectType && stack.projectType !== 'unknown') {
+    annotations.push(formatProjectType(stack.projectType));
+  }
+
+  // Audio format info
+  if (stack.audioDsp?.formats && stack.audioDsp.formats.length > 0) {
+    annotations.push(stack.audioDsp.formats.join('/'));
+  }
+
+  // Monorepo info
+  if (stack.monorepoType && stack.monorepoType !== 'none') {
+    annotations.push(formatMonorepoType(stack.monorepoType).replace(' monorepo', ''));
+  }
+
+  if (annotations.length > 0) {
+    summary += ` [${annotations.join(', ')}]`;
+  }
+
+  return summary;
+}
+
+/**
  * Format project type for display
  */
 function formatProjectType(type: ProjectType): string {
@@ -1448,6 +1612,7 @@ function formatProjectType(type: ProjectType): string {
     'cli-tool': 'CLI Tool',
     'library': 'Library',
     'monorepo': 'Monorepo',
+    'audio-dsp': 'Audio/DSP',
     'unknown': 'Unknown',
   };
   return labels[type] || type;
