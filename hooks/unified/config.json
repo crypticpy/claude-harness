@@ -63,6 +63,11 @@
     }
   },
 
+  "evolution": {
+    "minSessionsForAnalysis": 3,
+    "description": "Self-evolution loop: lessons.jsonl -> aggregation -> LLM synthesis -> proposals -> user review"
+  },
+
   "skills": {
     "rulesPath": "skill-rules.json"
   }

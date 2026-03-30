@@ -129,12 +129,14 @@ function loadRecentLessons(cwd, count = 5) {
             for (const line of recent) {
                 try {
                     const obj = JSON.parse(line);
-                    const summary = obj.lesson || obj.summary || obj.message || null;
+                    // Handle both singular (bootstrap/manual) and plural (trace-diagnosis) formats
+                    const summary = obj.lesson || obj.summary || obj.message ||
+                        (Array.isArray(obj.lessons) ? obj.lessons.filter(Boolean).join('; ') : null);
                     if (summary) {
                         lessons.push({
                             lesson: summary,
                             type: obj.type || 'unknown',
-                            severity: obj.severity || 'info',
+                            severity: obj.severity || (obj.efficiency != null && obj.efficiency <= 5 ? 'high' : 'info'),
                             ts: obj.timestamp || null,
                         });
                     }

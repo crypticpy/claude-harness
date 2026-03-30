@@ -125,6 +125,14 @@ async function main() {
                 break;
             }
 
+            case 'evolve': {
+                // Self-evolution: aggregate lessons and propose improvements
+                const evolveModule = await loadModule('self-evolution');
+                const result = await evolveModule.evolve(config);
+                console.log(JSON.stringify(result, null, 2));
+                break;
+            }
+
             default:
                 console.error(`[UnifiedHook] Unknown event type: ${eventType}`);
         }

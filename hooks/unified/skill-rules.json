@@ -105,6 +105,32 @@
         "proactiveHint": "Use semantic_lookup for file summaries, impact_check before edits, brain_search for recalled patterns"
       }
     },
+    "evolve": {
+      "type": "slash-command",
+      "enforcement": "suggest",
+      "priority": "medium",
+      "description": "Self-evolution analysis - aggregates lessons across sessions and proposes harness improvements. Closes the feedback loop.",
+      "action": "Use the /evolve slash command (type it directly), NOT the Skill tool.",
+      "promptTriggers": {
+        "keywords": [
+          "evolve",
+          "evolution",
+          "self-improvement",
+          "harness improvement",
+          "lesson review",
+          "pattern analysis",
+          "optimize harness",
+          "improve hooks",
+          "retrospective"
+        ],
+        "intentPatterns": [
+          "(evolve|evolution|improve).*?(harness|hooks|config)",
+          "(review|analyze).*?(lessons|patterns|sessions)",
+          "(retrospective|retro).*?(session|harness)",
+          "what.*?(learn|improve|fix).*?(across|from).*?sessions"
+        ]
+      }
+    },
     "freview": {
       "type": "slash-command",
       "enforcement": "suggest",
@@ -149,6 +175,7 @@
     "skill_overview": {
       "frontend-design": "UI/UX design - triggers on design, aesthetic, polished interface requests",
       "context-layer": "PROACTIVE - triggers on file edits to suggest impact_check for finding downstream consumers before breaking changes",
+      "evolve": "SLASH COMMAND - self-evolution via /evolve, aggregates lessons and proposes harness improvements",
       "freview": "SLASH COMMAND - final review via /freview, spawns completeness and code review agents"
     }
   }
