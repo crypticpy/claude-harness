@@ -122,4 +122,16 @@
 
 **Quality Gates**: Enforce checks from Coding Best Practices #3 and #6 (input validation, parameterized queries, auth/authz, no hardcoded secrets).
 
+## Verification Protocol
+
+Three-tier verification is enforced for all significant work:
+
+**Tier 1 — Edit Self-Check**: After turns with significant file changes, a verification prompt is injected automatically. Review it honestly — don't dismiss it as noise. If it flags a concern, address it before moving on.
+
+**Tier 2 — Phase Gates**: When executing a plan, run both `final-review-completeness` and `principal-code-reviewer` agents at the end of each phase. Do not proceed to the next phase until critical issues are resolved.
+
+**Tier 3 — Completion Review**: Before reporting any significant work as complete, run `/freview`. Present the results to the user. All critical and high findings must be addressed.
+
+These verification gates exist because stubs get forgotten, scope creeps silently, and "I'll fix it later" becomes "it shipped broken." The cost of a 2-minute review is always less than the cost of a missed bug.
+
 When planning, no need to estimate completion times—just lay out tasks and actions.

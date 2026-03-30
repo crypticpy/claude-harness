@@ -106,9 +106,14 @@ async function main() {
             }
 
             case 'stop': {
-                // Stop: quality gates
-                const module = await loadModule('quality-gates');
-                await module.runGates(event, config);
+                // Stop: quality gates + verification check
+                const [gatesModule, verifyModule] = await Promise.all([
+                    loadModule('quality-gates'),
+                    loadModule('verification-check')
+                ]);
+                await gatesModule.runGates(event, config);
+                const verifyOutput = await verifyModule.runVerification(event, config);
+                if (verifyOutput) console.log(verifyOutput);
                 break;
             }
 
