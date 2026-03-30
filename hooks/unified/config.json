@@ -1,0 +1,69 @@
+{
+  "version": "2.0.0",
+  "description": "Unified Claude Code Hooks System - Memento Architecture",
+
+  "llm": {
+    "recall": {
+      "provider": "openrouter",
+      "model": "openai/gpt-4.1",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "maxTokens": 2000,
+      "description": "Long-context model for historical recall (1M tokens)"
+    },
+    "summarize": {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o-mini",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "maxTokens": 500,
+      "description": "Fast mini model for edit summaries"
+    }
+  },
+
+  "context": {
+    "compactionThreshold": 200000,
+    "contextWindow": 210000,
+    "warningThresholds": {
+      "green": 50000,
+      "yellow": 25000,
+      "orange": 10000
+    }
+  },
+
+  "rolling_log": {
+    "maxEntries": 10000,
+    "maxAgeDays": 30,
+    "summarizeAfterEdits": 2,
+    "backgroundEnrichment": true
+  },
+
+  "formatting": {
+    "enabled": true,
+    "comment": "Formatters run on PostToolUse for Write|Edit. Uses npx for JS/TS (no global install needed).",
+    "extensions": {
+      ".ts": "npx --yes prettier --write",
+      ".tsx": "npx --yes prettier --write",
+      ".js": "npx --yes prettier --write",
+      ".jsx": "npx --yes prettier --write",
+      ".json": "npx --yes prettier --write",
+      ".md": "npx --yes prettier --write",
+      ".py": "/Users/aiml/.pyenv/shims/black -q",
+      ".go": "/opt/homebrew/bin/gofmt -w",
+      ".rs": "/opt/homebrew/bin/rustfmt"
+    }
+  },
+
+  "qualityGates": {
+    "onStop": {
+      "enabled": true,
+      "commands": {
+        "typescript": "npx tsc --noEmit",
+        "eslint": "npx eslint . --max-warnings 0",
+        "default": null
+      }
+    }
+  },
+
+  "skills": {
+    "rulesPath": "skill-rules.json"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "_canonical_location": "~/.claude/hooks/unified/skill-rules.json",
+  "_note": "This file is intentionally minimal. The canonical skill-rules.json lives in hooks/unified/. The skill-activation module falls back to that location when this file has no 'skills' key. Do NOT add skill definitions here — edit the canonical copy instead.",
+  "version": "1.1",
+  "redirect": true
+}

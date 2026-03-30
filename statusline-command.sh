@@ -27,9 +27,8 @@ model=$(echo "$input" | jq -r '.model.display_name // .model.id // "?"')
 context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 transcript_path=$(echo "$input" | jq -r '.transcript_path // ""')
 
-# Use COMPACTION threshold (154K) instead of full context (200K)
-# Auto-compaction happens at ~154K, so show usable context
-compaction_threshold=154000
+# Use COMPACTION threshold (200K) - auto-compact triggers at ~95% of 210K effective window
+compaction_threshold=200000
 compaction_k=$((compaction_threshold / 1000))
 
 # ACCURATE context usage from current_usage (sum of all token types)
@@ -60,8 +59,9 @@ remaining_k=$((remaining_until_compact / 1000))
 session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 [ "$session_cost" = "null" ] && session_cost=0
 
-# Write context stats to shared file for context-layer plugin
+# Write context stats to shared file for context-layer plugin (only with real data)
 CONTEXT_FILE="/tmp/claude-context-stats.json"
+if [ "$ctx_tokens" -gt 0 ] || [ ! -f "$CONTEXT_FILE" ]; then
 cat > "$CONTEXT_FILE" << EOF
 {
   "timestamp": $(date +%s),
@@ -77,6 +77,19 @@ cat > "$CONTEXT_FILE" << EOF
   "session_cost_usd": $session_cost
 }
 EOF
+fi
+
+# Also update Claude Deck state if it exists (only when we have real data)
+CLAUDE_DECK_STATE="$HOME/.claude-deck/state.json"
+if [ -f "$CLAUDE_DECK_STATE" ] && command -v jq &> /dev/null && [ "$ctx_tokens" -gt 0 ]; then
+    # Update context fields in claude-deck state
+    jq --argjson ctx_size "$context_size" \
+       --argjson ctx_used "$ctx_tokens" \
+       --argjson ctx_pct "$ctx_percent" \
+       --argjson cost "$session_cost" \
+       '.contextSize = $ctx_size | .contextUsed = $ctx_used | .contextPercent = $ctx_pct | .sessionCost = $cost' \
+       "$CLAUDE_DECK_STATE" > "${CLAUDE_DECK_STATE}.tmp" && mv "${CLAUDE_DECK_STATE}.tmp" "$CLAUDE_DECK_STATE"
+fi
 
 # Visual progress bar (10 chars wide)
 bar_width=10
@@ -84,10 +97,10 @@ filled=$((ctx_percent * bar_width / 100))
 empty=$((bar_width - filled))
 
 # Choose color based on remaining until compaction
-# Red: <10K remaining, Orange: <30K, Yellow: <50K, Green: 50K+
+# Red: <10K remaining, Orange: <25K, Yellow: <50K, Green: 50K+
 if [ "$remaining_until_compact" -le 10000 ]; then
   bar_color="$c_error"
-elif [ "$remaining_until_compact" -le 30000 ]; then
+elif [ "$remaining_until_compact" -le 25000 ]; then
   bar_color="$c_warning"
 elif [ "$remaining_until_compact" -le 50000 ]; then
   bar_color="$c_warning"
@@ -95,17 +108,15 @@ else
   bar_color="$c_success"
 fi
 
-# Build visual bar - shows progress toward compaction threshold (154K)
+# Build visual bar - shows progress toward compaction threshold (200K)
 bar_filled=""
 bar_empty=""
 for ((i=0; i<filled; i++)); do bar_filled+="█"; done
 for ((i=0; i<empty; i++)); do bar_empty+="░"; done
 context_bar="${bar_color}${bar_filled}${c_dim}${bar_empty}${c_reset} ${ctx_k}k/${compaction_k}k (${ctx_percent}%)"
 
-# Session cost
-session_cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
-[ "$session_cost" = "null" ] && session_cost=0
-cost_display=$(printf "$%.2f" "$session_cost")
+# Session cost display (session_cost already extracted above)
+cost_display=$(printf '$%.2f' "$session_cost")
 
 # Time elapsed
 duration_ms=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
