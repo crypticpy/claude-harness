@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, m
 import { join } from 'path';
 import { callLlm } from './llm-call.mjs';
 import { getApiKey } from './api-key.mjs';
+import { isPoisonedMemory } from './session-memory.mjs';
 
 const EVOLUTION_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'evolution');
 const PROPOSALS_FILE = join(EVOLUTION_DIR, 'proposals.md');
@@ -74,11 +75,7 @@ function collectSessionMemories(limit = 20) {
         for (const file of files) {
             try {
                 const data = JSON.parse(readFileSync(join(memoriesDir, file), 'utf-8'));
-                // Skip poisoned memories (stub values from failed LLM calls)
-                const isPoisoned = data.projectContext === 'Unknown'
-                    && data.overallDirection === 'In progress'
-                    && (!data.keyPoints || data.keyPoints.length === 0);
-                if (isPoisoned) continue;
+                if (isPoisonedMemory(data)) continue;
                 // Require at least one meaningful field
                 if (data.projectContext || data.overallDirection || data.keyPoints?.length) {
                     memories.push({

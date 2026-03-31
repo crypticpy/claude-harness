@@ -10,6 +10,24 @@ import { callLlm } from './llm-call.mjs';
 
 const MEMORIES_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'memories');
 
+/**
+ * Detect poisoned memory — stub values written when LLM calls fail.
+ * Single source of truth: used in session-memory and self-evolution.
+ */
+export function isPoisonedMemory(data) {
+    if (!data) return false;
+    return data.projectContext === 'Unknown'
+        && data.overallDirection === 'In progress'
+        && (!data.keyPoints || data.keyPoints.length === 0);
+}
+
+/**
+ * Check if memory has real (non-poisoned) content worth preserving.
+ */
+export function hasRealContent(data) {
+    return data?.projectContext && !isPoisonedMemory(data);
+}
+
 // Ensure memories directory exists
 if (!existsSync(MEMORIES_DIR)) {
     mkdirSync(MEMORIES_DIR, { recursive: true });
@@ -32,9 +50,7 @@ export async function injectMemory(event, config) {
         if (!memory.projectContext && !memory.overallDirection && !memory.keyPoints?.length) {
             return null;
         }
-        if (memory.projectContext === 'Unknown'
-            && memory.overallDirection === 'In progress'
-            && (!memory.keyPoints || memory.keyPoints.length === 0)) {
+        if (isPoisonedMemory(memory)) {
             return null;
         }
 
@@ -96,12 +112,8 @@ export async function saveMemory(event, config, apiKey) {
         if (!isFirstCompaction) {
             try {
                 existingMemory = JSON.parse(readFileSync(memoryPath, 'utf-8'));
-                // Detect poisoned memory (stub values from failed LLM calls)
-                // Force fresh summarization — stubs contain zero recoverable info
-                if (existingMemory
-                    && existingMemory.projectContext === 'Unknown'
-                    && existingMemory.overallDirection === 'In progress'
-                    && (!existingMemory.keyPoints || existingMemory.keyPoints.length === 0)) {
+                // Detect poisoned memory — force fresh summarization
+                if (isPoisonedMemory(existingMemory)) {
                     existingMemory = null;
                 }
             } catch (e) {
@@ -223,7 +235,7 @@ async function callLLM(apiKey, content, existingMemory, config) {
     if (!llmConfig) {
         // No LLM configured — preserve existing real memory if available,
         // otherwise return null to prevent writing a poisoned stub
-        if (existingMemory?.projectContext && existingMemory.projectContext !== 'Unknown') {
+        if (hasRealContent(existingMemory)) {
             return {
                 projectContext: existingMemory.projectContext,
                 overallDirection: existingMemory.overallDirection,
@@ -282,7 +294,7 @@ Format as JSON.`;
         if (process.env.DEBUG) process.stderr.write('[session-memory] LLM failed: ' + err.message + '\n');
         // If existing memory has real content, preserve it; otherwise return null
         // to prevent saveMemory from writing a poisoned stub
-        if (existingMemory?.projectContext && existingMemory.projectContext !== 'Unknown') {
+        if (hasRealContent(existingMemory)) {
             return {
                 projectContext: existingMemory.projectContext,
                 overallDirection: existingMemory.overallDirection,
