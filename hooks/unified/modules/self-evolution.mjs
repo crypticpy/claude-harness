@@ -74,11 +74,20 @@ function collectSessionMemories(limit = 20) {
         for (const file of files) {
             try {
                 const data = JSON.parse(readFileSync(join(memoriesDir, file), 'utf-8'));
-                if (data.summary || data.context) {
+                // Skip poisoned memories (stub values from failed LLM calls)
+                const isPoisoned = data.projectContext === 'Unknown'
+                    && data.overallDirection === 'In progress'
+                    && (!data.keyPoints || data.keyPoints.length === 0);
+                if (isPoisoned) continue;
+                // Require at least one meaningful field
+                if (data.projectContext || data.overallDirection || data.keyPoints?.length) {
                     memories.push({
                         session: file.replace('.json', ''),
-                        summary: data.summary || data.context,
-                        timestamp: data.timestamp || null,
+                        projectContext: data.projectContext || '',
+                        direction: data.overallDirection || '',
+                        keyPoints: data.keyPoints || [],
+                        compactions: data.compactionCount || 0,
+                        timestamp: data.startedAt || data.lastCompactionAt || null,
                     });
                 }
             } catch (_) { /* skip malformed */ }
@@ -196,7 +205,7 @@ ${aggregated.patterns.slice(0, 20).map((p, i) => `${i + 1}. ${p}`).join('\n')}
 ${aggregated.improvements.slice(0, 20).map((imp, i) => `${i + 1}. ${imp}`).join('\n')}
 
 ### Recent Session Summaries
-${memories.slice(0, 10).map(m => `- [${m.session}]: ${typeof m.summary === 'string' ? m.summary.slice(0, 200) : JSON.stringify(m.summary).slice(0, 200)}`).join('\n')}
+${memories.slice(0, 10).map(m => '- [' + m.session + '] ' + (m.projectContext || 'unknown') + ': ' + (m.direction || m.keyPoints.join('; ') || '(no summary)').slice(0, 200)).join('\n')}
 
 ## Current Harness State
 

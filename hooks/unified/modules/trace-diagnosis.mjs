@@ -11,7 +11,7 @@ import { callLlm } from './llm-call.mjs';
 
 const MAX_TRANSCRIPT_CHARS = 500_000;
 const MIN_TOOL_CALLS = 5;
-const LLM_TIMEOUT_MS = 30_000;
+const LLM_TIMEOUT_MS = 45_000;
 
 import { getApiKey } from './api-key.mjs';
 

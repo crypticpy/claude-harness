@@ -85,7 +85,9 @@ async function main() {
                 ]);
                 await Promise.all([
                     memoryModule.saveMemory(event, config, apiKey),
-                    diagModule.diagnoseSession(event, config, apiKey).catch(() => {})
+                    diagModule.diagnoseSession(event, config, apiKey).catch(err => {
+                        if (process.env.DEBUG) process.stderr.write('[trace-diagnosis] ' + err.message + '\n');
+                    })
                 ]);
                 break;
             }
@@ -102,6 +104,15 @@ async function main() {
 
                 // Log the operation
                 await modules[1].logOperation(event, config, apiKey);
+                break;
+            }
+
+            case 'post-tool': {
+                // PostToolUse on ALL tools: log only (no format-lint)
+                // Skip Write|Edit — already logged by post-edit handler
+                if (event.tool_name === 'Write' || event.tool_name === 'Edit') break;
+                const logModule = await loadModule('rolling-log');
+                await logModule.logOperation(event, config, apiKey);
                 break;
             }
 

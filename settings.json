@@ -34,6 +34,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "node $HOME/.claude/hooks/unified/unified-hook.mjs post-tool"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash $HOME/.claude-deck/hooks/claude-deck-hook.sh tool-complete"
           }
         ]

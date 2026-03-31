@@ -28,8 +28,13 @@ export async function injectMemory(event, config) {
 
         const memory = JSON.parse(readFileSync(memoryPath, 'utf-8'));
 
-        // Only inject if meaningful content
+        // Skip if no meaningful content or if memory is poisoned (stub values)
         if (!memory.projectContext && !memory.overallDirection && !memory.keyPoints?.length) {
+            return null;
+        }
+        if (memory.projectContext === 'Unknown'
+            && memory.overallDirection === 'In progress'
+            && (!memory.keyPoints || memory.keyPoints.length === 0)) {
             return null;
         }
 
@@ -70,6 +75,7 @@ export async function injectMemory(event, config) {
         return output;
 
     } catch (err) {
+        if (process.env.DEBUG) process.stderr.write('[session-memory] injectMemory error: ' + err.message + '\n');
         return null;
     }
 }
@@ -90,6 +96,14 @@ export async function saveMemory(event, config, apiKey) {
         if (!isFirstCompaction) {
             try {
                 existingMemory = JSON.parse(readFileSync(memoryPath, 'utf-8'));
+                // Detect poisoned memory (stub values from failed LLM calls)
+                // Force fresh summarization — stubs contain zero recoverable info
+                if (existingMemory
+                    && existingMemory.projectContext === 'Unknown'
+                    && existingMemory.overallDirection === 'In progress'
+                    && (!existingMemory.keyPoints || existingMemory.keyPoints.length === 0)) {
+                    existingMemory = null;
+                }
             } catch (e) {
                 existingMemory = null;
             }
@@ -108,6 +122,9 @@ export async function saveMemory(event, config, apiKey) {
         // Call LLM for memory extraction
         const llmMemory = await callLLM(apiKey, extractedContent, existingMemory, config);
 
+        // If LLM returned null (failed with no existing content to preserve), skip write
+        if (!llmMemory) return;
+
         // Merge and save
         const compactionCount = (existingMemory?.compactionCount || 0) + 1;
         const memory = {
@@ -121,7 +138,8 @@ export async function saveMemory(event, config, apiKey) {
         writeFileSync(memoryPath, JSON.stringify(memory, null, 2));
 
     } catch (err) {
-        // Silent failure - don't block compaction
+        // Don't block compaction, but log for debugging
+        if (process.env.DEBUG) process.stderr.write('[session-memory] saveMemory error: ' + err.message + '\n');
     }
 }
 
@@ -162,16 +180,31 @@ function extractTranscriptContent(transcript, existingMemory) {
                         .map(b => b.text)
                         .join('\n')
                         .slice(0, 1000);
+                    // Extract tool_use blocks (nested inside assistant messages)
+                    for (const block of content) {
+                        if (block.type === 'tool_use') {
+                            const args = JSON.stringify(block.input || {}).slice(0, 150);
+                            messages.push('TOOL: ' + (block.name || 'unknown') + ' ' + args);
+                        }
+                    }
                 } else if (typeof content === 'string') {
                     text = content.slice(0, 1000);
                 }
                 if (text) {
-                    messages.push(`ASSISTANT: ${text}`);
+                    messages.push('ASSISTANT: ' + text);
                 }
             }
 
-            if (entry.type === 'tool_use') {
-                messages.push(`TOOL: ${entry.name || 'unknown'}`);
+            // Extract tool errors from user entries (tool_result blocks)
+            if (entry.type === 'user' && Array.isArray(entry.message?.content)) {
+                for (const block of entry.message.content) {
+                    if (block.type === 'tool_result' && block.is_error) {
+                        const errText = typeof block.content === 'string'
+                            ? block.content.slice(0, 200)
+                            : JSON.stringify(block.content).slice(0, 200);
+                        messages.push('TOOL_ERROR: ' + errText);
+                    }
+                }
             }
 
         } catch (e) {}
@@ -188,11 +221,16 @@ function extractTranscriptContent(transcript, existingMemory) {
 async function callLLM(apiKey, content, existingMemory, config) {
     const llmConfig = config.llm?.summarize;
     if (!llmConfig) {
-        return {
-            projectContext: 'Unknown project',
-            overallDirection: 'In progress',
-            keyPoints: existingMemory?.keyPoints || []
-        };
+        // No LLM configured — preserve existing real memory if available,
+        // otherwise return null to prevent writing a poisoned stub
+        if (existingMemory?.projectContext && existingMemory.projectContext !== 'Unknown') {
+            return {
+                projectContext: existingMemory.projectContext,
+                overallDirection: existingMemory.overallDirection,
+                keyPoints: existingMemory.keyPoints || []
+            };
+        }
+        return null;
     }
 
     const isFirst = !existingMemory;
@@ -241,24 +279,32 @@ Format as JSON.`;
         if (result) return result;
         throw new Error('No JSON in response');
     } catch (err) {
-        return {
-            projectContext: existingMemory?.projectContext || 'Unknown',
-            overallDirection: existingMemory?.overallDirection || 'In progress',
-            keyPoints: existingMemory?.keyPoints || []
-        };
+        if (process.env.DEBUG) process.stderr.write('[session-memory] LLM failed: ' + err.message + '\n');
+        // If existing memory has real content, preserve it; otherwise return null
+        // to prevent saveMemory from writing a poisoned stub
+        if (existingMemory?.projectContext && existingMemory.projectContext !== 'Unknown') {
+            return {
+                projectContext: existingMemory.projectContext,
+                overallDirection: existingMemory.overallDirection,
+                keyPoints: existingMemory.keyPoints || []
+            };
+        }
+        return null;
     }
 }
 
 function saveBasicMemory(memoryPath, sessionId, existingMemory) {
-    const compactionCount = (existingMemory?.compactionCount || 0) + 1;
+    // If no existing memory or existing is poisoned, do NOT create a stub file.
+    // Writing nothing is better than poisoning — a future compaction with an API key
+    // will create a real memory from fresh LLM summarization.
+    if (!existingMemory) return;
+
+    // Existing memory has real content — preserve it with updated compaction count
     const memory = {
+        ...existingMemory,
         sessionId,
-        startedAt: existingMemory?.startedAt || new Date().toISOString(),
         lastCompactionAt: new Date().toISOString(),
-        compactionCount,
-        projectContext: existingMemory?.projectContext || 'Unknown',
-        overallDirection: existingMemory?.overallDirection || 'In progress',
-        keyPoints: existingMemory?.keyPoints || []
+        compactionCount: (existingMemory.compactionCount || 0) + 1,
     };
     writeFileSync(memoryPath, JSON.stringify(memory, null, 2));
 }
