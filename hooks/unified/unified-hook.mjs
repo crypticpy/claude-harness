@@ -125,6 +125,14 @@ async function main() {
                 break;
             }
 
+            case 'retrospective': {
+                // Deep retrospective: cross-session analysis of all history
+                const retroModule = await loadModule('deep-retrospective');
+                const retroResult = await retroModule.retrospective(config);
+                console.log(JSON.stringify(retroResult, null, 2));
+                break;
+            }
+
             case 'evolve': {
                 // Self-evolution: aggregate lessons and propose improvements
                 const evolveModule = await loadModule('self-evolution');
