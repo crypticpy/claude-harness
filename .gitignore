@@ -1,24 +1,75 @@
-# Transient/cache files
+# macOS
 .DS_Store
-*.jsonl
+
+# Transient session data
 history.jsonl
 stats-cache.json
+mcp-needs-auth-cache.json
+sessions/
+session-env/
+shell-snapshots/
+paste-cache/
+debug/
+downloads/
+cache/
+file-history/
 
-# Local settings (may contain secrets)
+# Generated settings (created by install.sh from settings.template.json)
+settings.json
 settings.local.json
 local/
 
-# Cache directories
-file-history/
-image-cache/
-shell-snapshots/
-statsig/
-debug/
+# Auto-generated backups
+settings.json.backup*
 backups/
 
-# Project-specific data
+# Project-specific data (contains per-project memories and paths)
 projects/
+
+# Plans and tasks (auto-generated, ephemeral)
+plans/
+tasks/
 todos/
+
+# Telemetry and analytics
+telemetry/
+statsig/
 
 # IDE integration
 ide/
+
+# Hook runtime data (logs, memories, evolution output)
+hooks/unified/logs/
+hooks/unified/memories/
+hooks/unified/evolution/
+hooks/unified/skill-state.json
+
+# Context-layer runtime
+context-layer/.last-session
+context-layer/lessons.jsonl
+
+# Plugin build artifacts and dependencies
+plugins/context-layer/node_modules/
+plugins/context-layer/dist/
+plugins/context-layer/dist-test/
+plugins/context-layer/data/
+
+# Plugin caches and registry (re-generated on install)
+plugins/cache/
+plugins/marketplaces/
+plugins/install-counts-cache.json
+plugins/installed_plugins.json
+plugins/known_marketplaces.json
+plugins/blocklist.json
+
+# Powerline runtime
+powerline/usage/today.json
+
+# Nested .claude artifact
+.claude/
+
+# Status line debug
+statusline-debug.sh
+
+# Chrome extension data
+chrome/

@@ -1,0 +1,12 @@
+{
+  "lastUpdated": "2026-02-02T07:46:50.633Z",
+  "insights": {
+    "package.json": {
+      "role": "Node.js dependencies",
+      "risk": "high",
+      "notes": [
+        "Identified as critical file"
+      ]
+    }
+  }
+}

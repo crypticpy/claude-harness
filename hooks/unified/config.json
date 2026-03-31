@@ -46,9 +46,9 @@
       ".jsx": "npx --yes prettier --write",
       ".json": "npx --yes prettier --write",
       ".md": "npx --yes prettier --write",
-      ".py": "/Users/aiml/.pyenv/shims/black -q",
-      ".go": "/opt/homebrew/bin/gofmt -w",
-      ".rs": "/opt/homebrew/bin/rustfmt"
+      ".py": "black -q",
+      ".go": "gofmt -w",
+      ".rs": "rustfmt"
     }
   },
 
