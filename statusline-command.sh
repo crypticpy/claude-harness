@@ -27,8 +27,11 @@ model=$(echo "$input" | jq -r '.model.display_name // .model.id // "?"')
 context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 transcript_path=$(echo "$input" | jq -r '.transcript_path // ""')
 
-# Use COMPACTION threshold (200K) - auto-compact triggers at ~95% of 210K effective window
-compaction_threshold=200000
+# Compaction threshold = CLAUDE_CODE_AUTO_COMPACT_WINDOW × CLAUDE_AUTOCOMPACT_PCT_OVERRIDE / 100.
+# Same formula used by context-report.mjs and the context-layer personality hook.
+auto_window="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-175000}"
+auto_pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-100}"
+compaction_threshold=$(( auto_window * auto_pct / 100 ))
 compaction_k=$((compaction_threshold / 1000))
 
 # ACCURATE context usage from current_usage (sum of all token types)
@@ -108,7 +111,7 @@ else
   bar_color="$c_success"
 fi
 
-# Build visual bar - shows progress toward compaction threshold (200K)
+# Build visual bar - shows progress toward compaction threshold
 bar_filled=""
 bar_empty=""
 for ((i=0; i<filled; i++)); do bar_filled+="█"; done
