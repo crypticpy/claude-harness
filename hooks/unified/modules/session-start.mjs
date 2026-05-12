@@ -8,7 +8,7 @@
  */
 
 import { execSync } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { checkSwarm } from './swarm-agent.mjs';
 
@@ -103,6 +103,78 @@ function gatherStackSnapshot(cwd) {
         if (process.env.DEBUG) console.error('[session-start] stack detection failed:', e.message);
         return {};
     }
+}
+
+/**
+ * Count entries in the context-layer memory and the auto-memory dir.
+ * Returns a one-line status string so the model knows whether queries will return anything.
+ */
+function getMemoryLayerStatus(cwd) {
+    const home = process.env.HOME || '';
+    const counts = { lessons: 0, fileInsights: 0, conventions: 0, hotFiles: 0, autoMemoryEntries: 0 };
+    let lastUpdated = null;
+
+    // Helper: track most recent timestamp seen
+    const trackTs = (ts) => {
+        if (!ts) return;
+        if (!lastUpdated || ts > lastUpdated) lastUpdated = ts;
+    };
+
+    // context-layer: lessons.jsonl (line count)
+    for (const p of [
+        join(cwd, '.claude', 'context-layer', 'lessons.jsonl'),
+        join(home, '.claude', 'context-layer', 'lessons.jsonl'),
+    ]) {
+        try {
+            if (!existsSync(p)) continue;
+            const content = readFileSync(p, 'utf-8').trim();
+            counts.lessons = content ? content.split('\n').filter(l => l.trim()).length : 0;
+            break;
+        } catch (_) { /* skip */ }
+    }
+
+    // context-layer: JSON files
+    const jsonFiles = [
+        ['file-insights.json', 'fileInsights', 'insights'],
+        ['conventions.json', 'conventions', 'patterns'],
+        ['hot-files.json', 'hotFiles', 'hotFiles'],
+    ];
+    for (const [filename, countKey, dataKey] of jsonFiles) {
+        for (const p of [
+            join(cwd, '.claude', 'context-layer', filename),
+            join(home, '.claude', 'context-layer', filename),
+        ]) {
+            try {
+                if (!existsSync(p)) continue;
+                const obj = JSON.parse(readFileSync(p, 'utf-8'));
+                const data = obj[dataKey];
+                if (Array.isArray(data)) counts[countKey] = data.length;
+                else if (data && typeof data === 'object') counts[countKey] = Object.keys(data).length;
+                trackTs(obj.lastUpdated);
+                break;
+            } catch (_) { /* skip */ }
+        }
+    }
+
+    // Auto-memory dir (per system-prompt convention)
+    // Project paths in ~/.claude/projects/ encode the cwd with slashes -> dashes
+    const projectKey = cwd.replace(/\//g, '-');
+    const autoMemDir = join(home, '.claude', 'projects', projectKey, 'memory');
+    try {
+        if (existsSync(autoMemDir)) {
+            const entries = readdirSync(autoMemDir).filter(f => f.endsWith('.md') && f !== 'MEMORY.md');
+            counts.autoMemoryEntries = entries.length;
+        }
+    } catch (_) { /* skip */ }
+
+    const total = counts.lessons + counts.fileInsights + counts.conventions + counts.autoMemoryEntries;
+    const mostlyEmpty = total < 5;
+    const tsHint = lastUpdated ? ` · last update ${lastUpdated.slice(0, 10)}` : '';
+    const guidance = mostlyEmpty
+        ? '_(mostly empty — `brain_search` won\'t return much yet; build it up by saving memories at natural breakpoints)_'
+        : '_Use `brain_search` for prior lessons, `semantic_lookup` for file summaries, `impact_check` before editing public APIs._';
+
+    return `${counts.lessons} lesson${counts.lessons === 1 ? '' : 's'}, ${counts.fileInsights} file-insight${counts.fileInsights === 1 ? '' : 's'}, ${counts.conventions} convention${counts.conventions === 1 ? '' : 's'}, ${counts.autoMemoryEntries} auto-memory entr${counts.autoMemoryEntries === 1 ? 'y' : 'ies'}${tsHint}\n${guidance}`;
 }
 
 /**
@@ -253,10 +325,24 @@ function formatLessons(lessons) {
     }).join('\n');
 }
 
+function harnessPointer(cwd) {
+    const harnessRoot = join(process.env.HOME || '', '.claude');
+    if (cwd !== harnessRoot) return null;
+    const agentsFile = join(harnessRoot, 'AGENTS.md');
+    if (!existsSync(agentsFile)) return null;
+    return `[Working in the Claude Code harness itself. Read ${agentsFile} for harness-specific invariants (poison prevention, fail-silent pattern, build commands, template-vs-runtime settings) before editing hooks, modules, or settings.]`;
+}
+
 export async function injectContext(_event, _config) {
     try {
         const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
         let output = '';
+
+        // ---- Harness-specific pointer (only when CWD is ~/.claude) ----
+        const pointer = harnessPointer(cwd);
+        if (pointer) {
+            output += pointer + '\n\n';
+        }
 
         // ---- Swarm coordination (highest priority) ----
         try {
@@ -296,6 +382,16 @@ export async function injectContext(_event, _config) {
         const gitStatus = getGitStatus(cwd);
         if (gitStatus) {
             output += '### Uncommitted Changes\n```\n' + gitStatus + '\n```\n\n';
+        }
+
+        // Memory layer status — tells the model whether brain_search will return anything
+        try {
+            const memStatus = getMemoryLayerStatus(cwd);
+            if (memStatus) {
+                output += '### Memory Layer\n' + memStatus + '\n\n';
+            }
+        } catch (e) {
+            if (process.env.DEBUG) console.error('[session-start] memory status failed:', e);
         }
 
         // Recent lessons from context-layer
