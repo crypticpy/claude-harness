@@ -4,8 +4,12 @@
  * Fires a SINGLE warning per session when context usage reaches 90% of the
  * auto-compact trigger. Silent otherwise — no per-prompt status spam.
  *
- * Threshold is derived at runtime from env vars Claude Code respects:
- *   compactAt = CLAUDE_CODE_AUTO_COMPACT_WINDOW * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE / 100
+ * Threshold is derived at runtime:
+ *   compactAt = CLAUDE_CODE_AUTO_COMPACT_WINDOW * 0.80
+ *
+ * Claude Code's actual auto-compact fires near 80% of the configured window;
+ * the CLAUDE_AUTOCOMPACT_PCT_OVERRIDE env var is documented but unreliable on
+ * the main thread (anthropics/claude-code#36381), so we use the observed 80%.
  *
  * The per-session marker lives at:
  *   ~/.claude/hooks/unified/memories/.warned-90pct-<session_id>
@@ -16,8 +20,7 @@ import { join, dirname } from 'path';
 
 function computeCompactThreshold() {
     const window = parseInt(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '200000', 10);
-    const pct = parseInt(process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE || '95', 10);
-    return Math.floor(window * pct / 100);
+    return Math.floor(window * 0.8);
 }
 
 function markerPath(sessionId) {

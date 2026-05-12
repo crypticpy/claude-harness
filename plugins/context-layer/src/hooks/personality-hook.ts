@@ -120,15 +120,16 @@ interface TokenStats {
 
 const TOKEN_STATS_FILE = "/tmp/claude-context-stats.json";
 
-// Auto-compact trigger = CLAUDE_CODE_AUTO_COMPACT_WINDOW * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE / 100.
-// Defaults match Claude Code's built-in behavior when env vars are unset.
+// Auto-compact trigger = CLAUDE_CODE_AUTO_COMPACT_WINDOW * 0.80.
+// Empirically Claude Code fires auto-compact near 80% of the window; the
+// CLAUDE_AUTOCOMPACT_PCT_OVERRIDE env var is documented but unreliable on
+// the main thread (anthropics/claude-code#36381), so we don't trust it.
 const COMPACTION_THRESHOLD: number = (() => {
   const window = parseInt(
     process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || "200000",
     10,
   );
-  const pct = parseInt(process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE || "95", 10);
-  return Math.floor((window * pct) / 100);
+  return Math.floor(window * 0.8);
 })();
 
 function loadTokenStats(): TokenStats | null {

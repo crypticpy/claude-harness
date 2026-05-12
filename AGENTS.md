@@ -28,7 +28,7 @@ A personal Claude Code harness ("Memento"). It's a collection of hook scripts, s
 1. **Fail silently.** Every hook module wraps its body in `try/catch` and returns `null` on error. A broken hook must never block Claude's loop. If you add a new module, follow the pattern in `context-report.mjs` or `session-memory.mjs`.
 2. **Poison prevention.** Session memory and lessons must never write `"Unknown"`, `"In progress"`, `"TBD"`, or any LLM-failure placeholder. Use `isPoisonedMemory()` from `hooks/unified/modules/poison-check.mjs` at read AND write paths. Commit `7afa309` repaired this; don't regress it.
 3. **No self-calls.** Hooks must not invoke Claude. Memory/diagnosis go through `llm-call.mjs` → OpenRouter → GPT-4.1 / GPT-4o-mini. Routing Claude through its own hooks creates feedback loops.
-4. **Compact threshold lives in env.** `CLAUDE_CODE_AUTO_COMPACT_WINDOW` × `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` / 100. Both `context-report.mjs` and `plugins/context-layer/src/hooks/personality-hook.ts` read these. Never hardcode a token threshold.
+4. **Compact threshold = `CLAUDE_CODE_AUTO_COMPACT_WINDOW` × 0.80.** Claude Code fires auto-compact near 80% of the configured window in practice; `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is documented but ignored on the main thread (anthropics/claude-code#36381), so we don't read it. The 0.80 factor lives in `context-report.mjs`, `statusline-command.sh`, and `plugins/context-layer/src/hooks/personality-hook.ts` — keep them in sync. Never hardcode a token threshold.
 5. **One-shot side effects use per-session markers.** See `context-report.mjs` — `writeFileSync(..., { flag: 'wx' })` makes the marker write atomic against concurrent hook runs.
 
 ## Files / dirs that are NOT source
