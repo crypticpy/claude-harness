@@ -19,16 +19,6 @@
     }
   },
 
-  "context": {
-    "compactionThreshold": 200000,
-    "contextWindow": 210000,
-    "warningThresholds": {
-      "green": 50000,
-      "yellow": 25000,
-      "orange": 10000
-    }
-  },
-
   "rolling_log": {
     "maxEntries": 10000,
     "maxAgeDays": 30,
@@ -66,9 +56,5 @@
   "evolution": {
     "minSessionsForAnalysis": 3,
     "description": "Self-evolution loop: lessons.jsonl -> aggregation -> LLM synthesis -> proposals -> user review"
-  },
-
-  "skills": {
-    "rulesPath": "skill-rules.json"
   }
 }

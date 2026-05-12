@@ -79,5 +79,8 @@ powerline/usage/today.json
 # Status line debug
 statusline-debug.sh
 
+# Cleanup sentinel timestamp
+.last-cleanup
+
 # Chrome extension data
 chrome/
