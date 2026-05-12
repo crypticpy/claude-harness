@@ -367,6 +367,17 @@ function aggregateAllData() {
  * Build a comprehensive prompt from aggregated data.
  * Targets ~50K tokens to fit comfortably in GPT-4.1's 1M context.
  */
+// Roughly 150K tokens at 4 chars/token. Keeps the prompt well under any
+// provider context cap even when the user has years of history.
+const MAX_PROMPT_CHARS = 600_000;
+// Caps on unbounded lists fed into the prompt. Tuned so a user with hundreds
+// of projects and thousands of tool ops still produces a prompt the model
+// can reason about, not a wall of identifiers.
+const MAX_HOTSPOTS = 30;
+const MAX_TOOL_ROWS = 25;
+const MAX_BASH_COMMANDS = 25;
+const MAX_PROJECTS = 40;
+
 function buildSynthesisPrompt(data) {
     let prompt = `You are analyzing the complete history of a Claude Code power user across ${data.prompts?.totalPrompts || '?'} prompts, ${data.sessions?.totalSessions || '?'} summarized sessions, ${data.edits?.totalEdits || '?'} file edits, and ${data.tools?.totalOperations || '?'} tool operations spanning ${data.prompts?.dateRange?.first?.slice(0, 10) || '?'} to ${data.prompts?.dateRange?.last?.slice(0, 10) || '?'}.
 
@@ -407,7 +418,7 @@ ${data.sessions.sessions.slice(-20).map(s =>
     prompt += `## File Edit Patterns (${data.edits?.totalEdits || 0} edits across ${data.edits?.totalFiles || 0} files)\n\n`;
     if (data.edits) {
         prompt += `Cross-session hotspots (files edited in 3+ sessions — high churn):
-${data.edits.hotspots.map(h => `  ${h.path}: ${h.edits} edits in ${h.sessions} sessions`).join('\n')}
+${data.edits.hotspots.slice(0, MAX_HOTSPOTS).map(h => `  ${h.path}: ${h.edits} edits in ${h.sessions} sessions`).join('\n')}
 
 Most edited files:
 ${data.edits.mostEdited.slice(0, 15).map(f => `  ${f.path}: ${f.edits} edits`).join('\n')}
@@ -421,20 +432,20 @@ ${data.edits.fileTypes.slice(0, 10).map(([ext, c]) => `  ${ext}: ${c}`).join('\n
     prompt += `## Tool Usage (${data.tools?.totalOperations || 0} operations across ${data.tools?.sessionsLogged || 0} sessions)\n\n`;
     if (data.tools) {
         prompt += `Tool frequency:
-${data.tools.toolUsage.map(([t, c]) => `  ${t}: ${c}`).join('\n')}
+${data.tools.toolUsage.slice(0, MAX_TOOL_ROWS).map(([t, c]) => `  ${t}: ${c}`).join('\n')}
 
 Tool errors:
-${data.tools.toolErrors.map(([t, c]) => `  ${t}: ${c} errors`).join('\n')}
+${data.tools.toolErrors.slice(0, MAX_TOOL_ROWS).map(([t, c]) => `  ${t}: ${c} errors`).join('\n')}
 
 Top Bash commands:
-${data.tools.topBashCommands.map(([cmd, c]) => `  ${cmd}: ${c}`).join('\n')}
+${data.tools.topBashCommands.slice(0, MAX_BASH_COMMANDS).map(([cmd, c]) => `  ${cmd}: ${c}`).join('\n')}
 
 `;
     }
 
     prompt += `## Project Portfolio (${data.projects?.totalProjects || 0} projects with memory)\n\n`;
     if (data.projects) {
-        prompt += data.projects.projects.map(p =>
+        prompt += data.projects.projects.slice(0, MAX_PROJECTS).map(p =>
             `  ${p.path} (${p.memoryFiles} memory files)${p.index ? '\n    ' + p.index.split('\n').slice(0, 3).join('\n    ') : ''}`
         ).join('\n') + '\n\n';
     }
@@ -485,6 +496,14 @@ IMPORTANT:
 - Prioritize actionable recommendations over observations
 - Consider the full arc: how has this user's workflow evolved over time?
 - Look for anti-patterns: files edited too many times (churn), tools with high error rates, etc.`;
+
+    // Final safety net: if the prompt is still too large after per-section
+    // caps, truncate to MAX_PROMPT_CHARS so we don't blow a provider limit.
+    if (prompt.length > MAX_PROMPT_CHARS) {
+        const head = prompt.slice(0, MAX_PROMPT_CHARS - 2_000);
+        const tail = prompt.slice(-1_500);
+        prompt = `${head}\n\n[... truncated ${prompt.length - MAX_PROMPT_CHARS} chars from middle ...]\n\n${tail}`;
+    }
 
     return prompt;
 }

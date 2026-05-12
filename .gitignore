@@ -1,6 +1,14 @@
 # macOS
 .DS_Store
 
+# Secrets — must never be committed
+.credentials.json
+.env
+.env.*
+
+# Editor / hook backups
+*.bak
+
 # Transient session data
 history.jsonl
 stats-cache.json

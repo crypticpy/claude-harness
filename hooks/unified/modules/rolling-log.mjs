@@ -11,6 +11,9 @@ import { callLlm } from './llm-call.mjs';
 
 const LOG_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'logs');
 const FILE_EDITS_DB = join(LOG_DIR, 'file-edits.json');
+// Append-only sidecar for LLM-generated edit summaries. Avoids racing with
+// trackFileEdit (which mutates FILE_EDITS_DB synchronously on every edit).
+const EDIT_SUMMARIES_LOG = join(LOG_DIR, 'edit-summaries.jsonl');
 
 // Ensure log directory exists
 if (!existsSync(LOG_DIR)) {
@@ -125,7 +128,10 @@ async function trackFileEdit(event, config, apiKey) {
 }
 
 /**
- * Background enrichment: call mini LLM to summarize what changed
+ * Background enrichment: call mini LLM to summarize what changed.
+ * Writes summaries to an append-only sidecar log to avoid racing with
+ * trackFileEdit, which mutates FILE_EDITS_DB synchronously on every edit.
+ * Summaries are merged back in on read by getFileEditHistory.
  */
 async function enrichEditSummary(filePath, editTimestamp, toolInput, apiKey, config) {
     try {
@@ -145,25 +151,40 @@ Summary:`;
             format: 'text',
         });
 
-        if (summary) {
-            // Re-read DB to get latest state (avoids stale reference bug)
-            const db = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
-            // Find the matching entry in the re-read DB by timestamp
-            const fileEntry = db.files?.[filePath];
-            if (fileEntry) {
-                for (const sessionData of Object.values(fileEntry.sessions)) {
-                    const dbEdit = sessionData.edits.find(e => e.timestamp === editTimestamp);
-                    if (dbEdit) {
-                        dbEdit.summary = summary;
-                        break;
-                    }
-                }
-                writeFileSync(FILE_EDITS_DB, JSON.stringify(db, null, 2));
-            }
-        }
+        if (!summary) return;
+
+        const record = JSON.stringify({
+            filePath,
+            editTimestamp,
+            summary,
+            generatedAt: new Date().toISOString(),
+        }) + '\n';
+        appendFileSync(EDIT_SUMMARIES_LOG, record);
     } catch (err) {
         // Silent failure
     }
+}
+
+/**
+ * Load a map of {filePath::editTimestamp -> summary} from the append-only log.
+ * Later entries win, so re-runs of enrichment produce the latest summary.
+ */
+function loadSummariesMap() {
+    const map = new Map();
+    if (!existsSync(EDIT_SUMMARIES_LOG)) return map;
+    try {
+        const content = readFileSync(EDIT_SUMMARIES_LOG, 'utf-8');
+        for (const line of content.split('\n')) {
+            if (!line.trim()) continue;
+            try {
+                const r = JSON.parse(line);
+                if (r.filePath && r.editTimestamp && r.summary) {
+                    map.set(`${r.filePath}::${r.editTimestamp}`, r.summary);
+                }
+            } catch (_) {}
+        }
+    } catch (_) {}
+    return map;
 }
 
 /**
@@ -219,15 +240,24 @@ export function getFileEditHistory(filePath, sessionId) {
     try {
         const db = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
         const fileData = db.files[filePath];
-        
+
         if (!fileData) return null;
 
         const sessionEdits = fileData.sessions[sessionId];
-        
+        const rawEdits = sessionEdits?.edits || [];
+
+        // Merge summaries from the append-only sidecar.
+        const summaries = loadSummariesMap();
+        const edits = rawEdits.map(e => {
+            if (e.summary) return e;
+            const found = summaries.get(`${filePath}::${e.timestamp}`);
+            return found ? { ...e, summary: found } : e;
+        });
+
         return {
             totalEdits: fileData.editCount,
             sessionEdits: sessionEdits?.count || 0,
-            edits: sessionEdits?.edits || [],
+            edits,
             firstEdit: fileData.firstEdit,
             lastEdit: fileData.lastEdit
         };
@@ -316,6 +346,32 @@ function pruneOldEntries(config) {
                     writeFileSync(FILE_EDITS_DB, JSON.stringify(db, null, 2));
                 }
             }
+        }
+
+        // --- Prune the edit-summaries sidecar ---
+        // Drop lines whose editTimestamp is older than the cutoff.
+        try {
+            if (existsSync(EDIT_SUMMARIES_LOG)) {
+                const lines = readFileSync(EDIT_SUMMARIES_LOG, 'utf-8').split('\n');
+                const kept = [];
+                let dropped = 0;
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const r = JSON.parse(line);
+                        const ts = r.editTimestamp ? new Date(r.editTimestamp).getTime() : 0;
+                        if (ts >= cutoff) kept.push(line);
+                        else dropped++;
+                    } catch {
+                        dropped++;
+                    }
+                }
+                if (dropped > 0) {
+                    writeFileSync(EDIT_SUMMARIES_LOG, kept.length ? kept.join('\n') + '\n' : '');
+                }
+            }
+        } catch {
+            // Skip if we can't prune the sidecar
         }
 
         // --- Prune old session log files ---

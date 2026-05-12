@@ -257,14 +257,42 @@ function getTodos(cwd) {
 /**
  * Format the stack detection sections into compact markdown.
  */
+// Project marker → language version-string matcher. Used to scope the
+// "Languages" line in the snapshot to languages the project actually uses.
+const MARKER_TO_LANG = {
+    'package.json':      /^node\b/i,
+    'tsconfig.json':     /^node\b/i,
+    'pyproject.toml':    /python/i,
+    'requirements.txt':  /python/i,
+    'setup.py':          /python/i,
+    'Cargo.toml':        /rustc/i,
+    'go.mod':            /^go\b/i,
+    'pom.xml':           /(openjdk|java)/i,
+    'build.gradle':      /(openjdk|java)/i,
+    'Gemfile':           /^ruby\b/i,
+    'Package.swift':     /swift/i,
+    // Dockerfile / Makefile carry no language signal on their own.
+};
+
 function formatStackSection(sections) {
     const parts = [];
 
-    // Languages
+    // Languages — filtered to those the project's markers point at. If no
+    // recognized markers are present we keep the full list (we don't know
+    // what the user is working on, so don't hide anything).
     if (sections.LANGUAGES) {
         const langs = sections.LANGUAGES.split('\n').filter(l => l.trim());
-        if (langs.length > 0) {
-            parts.push('**Languages**: ' + langs.join(', '));
+        const markers = sections.PROJECT
+            ? sections.PROJECT.split('\n').map(l => l.trim()).filter(Boolean)
+            : [];
+        const matchers = markers
+            .map(m => MARKER_TO_LANG[m])
+            .filter(Boolean);
+        const filtered = matchers.length > 0
+            ? langs.filter(lang => matchers.some(re => re.test(lang)))
+            : langs;
+        if (filtered.length > 0) {
+            parts.push('**Languages**: ' + filtered.join(', '));
         }
     }
 
