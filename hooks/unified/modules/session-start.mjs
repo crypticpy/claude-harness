@@ -10,7 +10,6 @@
 import { execSync } from 'child_process';
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { checkSwarm } from './swarm-agent.mjs';
 
 /**
  * Parse @@MARKER@@ delimited output from a compound shell command.
@@ -353,6 +352,43 @@ function formatLessons(lessons) {
     }).join('\n');
 }
 
+/**
+ * Suggest LSPs that are disabled but match this project's languages.
+ * Only flags the "rare" LSPs (Go, Rust, Swift, C/C++, Lua); TS/Python/Java are always-on.
+ * Returns a nudge string or null if nothing to suggest.
+ */
+function detectMissingLsps(cwd) {
+    const LSP_MARKERS = [
+        { plugin: 'gopls-lsp@claude-plugins-official',         name: 'Go',     globs: ['go.mod'] },
+        { plugin: 'rust-analyzer-lsp@claude-plugins-official', name: 'Rust',   globs: ['Cargo.toml'] },
+        { plugin: 'swift-lsp@claude-plugins-official',         name: 'Swift',  globs: ['Package.swift'] },
+        { plugin: 'clangd-lsp@claude-plugins-official',        name: 'C/C++',  globs: ['CMakeLists.txt', 'compile_commands.json', 'Makefile'] },
+        { plugin: 'lua-lsp@claude-plugins-official',           name: 'Lua',    globs: ['.luarc.json', 'init.lua'] },
+    ];
+
+    let enabledMap = {};
+    try {
+        const settingsPath = join(process.env.HOME || '', '.claude', 'settings.json');
+        if (existsSync(settingsPath)) {
+            const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+            enabledMap = settings.enabledPlugins || {};
+        }
+    } catch (e) {
+        return null;
+    }
+
+    const hits = [];
+    for (const { plugin, name, globs } of LSP_MARKERS) {
+        if (enabledMap[plugin] === true) continue;
+        const found = globs.some(g => existsSync(join(cwd, g)));
+        if (found) hits.push({ plugin, name });
+    }
+
+    if (hits.length === 0) return null;
+    const list = hits.map(h => `${h.name} (${h.plugin})`).join(', ');
+    return `[LSP suggestion: this project uses ${list} but the language server(s) are disabled in ~/.claude/settings.json. Toggle to true and restart the session to enable.]`;
+}
+
 function harnessPointer(cwd) {
     const harnessRoot = join(process.env.HOME || '', '.claude');
     if (cwd !== harnessRoot) return null;
@@ -372,14 +408,12 @@ export async function injectContext(_event, _config) {
             output += pointer + '\n\n';
         }
 
-        // ---- Swarm coordination (highest priority) ----
+        // ---- LSP suggestion for rare-language projects with disabled language servers ----
         try {
-            const swarmContext = await checkSwarm(cwd);
-            if (swarmContext) {
-                output += swarmContext + '\n\n---\n\n';
-            }
+            const lspNudge = detectMissingLsps(cwd);
+            if (lspNudge) output += lspNudge + '\n\n';
         } catch (e) {
-            if (process.env.DEBUG) console.error('[session-start] swarm check failed:', e);
+            if (process.env.DEBUG) console.error('[session-start] lsp detect failed:', e);
         }
 
         // ---- Compound environment detection (single exec) ----

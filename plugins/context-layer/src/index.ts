@@ -27,19 +27,7 @@ export {
   type ChunkRefResult,
   type CacheChunkInput,
   type SymbolLocation as ChunkSymbolLocation,
-} from './tools/chunk-ref';
-
-// Swarm Coordination Tools
-export {
-  swarmInit,
-  swarmQueryBoard,
-  swarmClaimTask,
-  swarmCompleteTask,
-  swarmSendMessage,
-  swarmReadMessages,
-  swarmLogDecision,
-  swarmToolDefinitions,
-} from './tools/swarm-tools';
+} from "./tools/chunk-ref";
 
 // Semantic Lookup Tool
 export {
@@ -53,12 +41,11 @@ export {
   type SemanticLookupOptions,
   type SemanticLookupErrorCode,
   type BatchLookupResult,
-} from './tools/semantic-lookup';
+} from "./tools/semantic-lookup";
 
 // Import these for local use in this file
-import { handleSemanticLookup as _handleSemanticLookup } from './tools/semantic-lookup';
-import { semanticLookupToolDefinition as _semanticLookupToolDefinition } from './tools/semantic-lookup';
-import * as _swarmTools from './tools/swarm-tools';
+import { handleSemanticLookup as _handleSemanticLookup } from "./tools/semantic-lookup";
+import { semanticLookupToolDefinition as _semanticLookupToolDefinition } from "./tools/semantic-lookup";
 
 // Symbol Context Tool
 export {
@@ -72,7 +59,7 @@ export {
   type SymbolContextResult,
   type SymbolKind as SymbolContextKind,
   type RelatedSymbol,
-} from './tools/symbol-context';
+} from "./tools/symbol-context";
 
 // Impact Check Tool
 export {
@@ -80,7 +67,7 @@ export {
   type ImpactCheckInput,
   type ImpactResult,
   type Dependent,
-} from './tools/impact-check';
+} from "./tools/impact-check";
 
 // =============================================================================
 // Storage Exports
@@ -94,7 +81,7 @@ export type {
   CodeChunk,
   StorageOptions,
   BulkOperationResult,
-} from './storage/interface';
+} from "./storage/interface";
 
 export {
   SQLiteStorage,
@@ -105,7 +92,7 @@ export {
   generateChunkId,
   generateReadId,
   computeProjectHash,
-} from './storage';
+} from "./storage";
 
 // =============================================================================
 // Personality Exports
@@ -120,7 +107,7 @@ export type {
   KeyFile,
   ExtractionOptions,
   CacheValidityResult,
-} from './personality';
+} from "./personality";
 
 // =============================================================================
 // Indexer Exports
@@ -136,7 +123,7 @@ export type {
   ParserOptions,
   ExportKind,
   FileSummary,
-} from './indexer';
+} from "./indexer";
 
 export {
   DEFAULT_PARSER_OPTIONS,
@@ -145,7 +132,7 @@ export {
   getLanguageFromExtension,
   generateSummary,
   formatSummaryAsText,
-} from './indexer';
+} from "./indexer";
 
 // =============================================================================
 // LSP Exports
@@ -171,7 +158,7 @@ export {
   computeFileHash,
   getGlobalCache,
   resetGlobalCache,
-} from './lsp';
+} from "./lsp";
 
 // =============================================================================
 // Hooks Exports
@@ -185,30 +172,30 @@ export {
   type HookResult,
   type HookInput,
   type ContextHealthStatus,
-} from './hooks';
+} from "./hooks";
 
 // =============================================================================
 // Plugin Metadata
 // =============================================================================
 
 /** Plugin name for MCP registration */
-export const PLUGIN_NAME = '@anthropic/context-layer';
+export const PLUGIN_NAME = "@anthropic/context-layer";
 
 /** Plugin version */
-export const PLUGIN_VERSION = '0.1.0';
+export const PLUGIN_VERSION = "0.1.0";
 
 /** Plugin description */
 export const PLUGIN_DESCRIPTION =
-  'Intelligent context management with semantic file summaries, ' +
-  'impact analysis, symbol context, and context health monitoring.';
+  "Intelligent context management with semantic file summaries, " +
+  "impact analysis, symbol context, and context health monitoring.";
 
 // =============================================================================
 // Plugin Lifecycle
 // =============================================================================
 
-import { createStorage } from './storage';
-import { resetGlobalCache as _resetGlobalCache } from './lsp';
-import type { ContextStorage } from './storage/interface';
+import { createStorage } from "./storage";
+import { resetGlobalCache as _resetGlobalCache } from "./lsp";
+import type { ContextStorage } from "./storage/interface";
 
 /** Global storage instance for plugin lifecycle */
 let globalStorage: ContextStorage | null = null;
@@ -241,7 +228,9 @@ export interface PluginInitOptions {
  * await initializePlugin({ debug: true });
  * ```
  */
-export async function initializePlugin(options?: PluginInitOptions): Promise<void> {
+export async function initializePlugin(
+  options?: PluginInitOptions,
+): Promise<void> {
   const { dbPath, debug = false, skipDbInit = false } = options ?? {};
 
   if (debug) {
@@ -253,7 +242,9 @@ export async function initializePlugin(options?: PluginInitOptions): Promise<voi
     globalStorage = createStorage(dbPath);
 
     if (debug) {
-      console.log(`[${PLUGIN_NAME}] Storage initialized at: ${dbPath ?? 'default path'}`);
+      console.log(
+        `[${PLUGIN_NAME}] Storage initialized at: ${dbPath ?? "default path"}`,
+      );
     }
   }
 
@@ -318,34 +309,6 @@ export const tools = {
   semanticLookup: {
     definition: _semanticLookupToolDefinition,
     handler: _handleSemanticLookup,
-  },
-  swarm_init: {
-    definition: _swarmTools.swarmToolDefinitions[0],
-    handler: _swarmTools.swarmInit,
-  },
-  swarm_query_board: {
-    definition: _swarmTools.swarmToolDefinitions[1],
-    handler: _swarmTools.swarmQueryBoard,
-  },
-  swarm_claim_task: {
-    definition: _swarmTools.swarmToolDefinitions[2],
-    handler: _swarmTools.swarmClaimTask,
-  },
-  swarm_complete_task: {
-    definition: _swarmTools.swarmToolDefinitions[3],
-    handler: _swarmTools.swarmCompleteTask,
-  },
-  swarm_send_message: {
-    definition: _swarmTools.swarmToolDefinitions[4],
-    handler: _swarmTools.swarmSendMessage,
-  },
-  swarm_read_messages: {
-    definition: _swarmTools.swarmToolDefinitions[5],
-    handler: _swarmTools.swarmReadMessages,
-  },
-  swarm_log_decision: {
-    definition: _swarmTools.swarmToolDefinitions[6],
-    handler: _swarmTools.swarmLogDecision,
   },
   // Additional tools can be registered here as they get MCP handlers
 } as const;

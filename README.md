@@ -51,7 +51,7 @@ Claude Code's context window compacts every ~154K tokens, losing detailed memory
 │   └── final-review-completeness.md
 │
 └── plugins/context-layer/           # MCP plugin (TypeScript)
-    ├── src/                         # Semantic lookup, impact check, swarm tools
+    ├── src/                         # Semantic lookup, impact check, brain search
     └── package.json
 ```
 

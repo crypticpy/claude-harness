@@ -24,7 +24,7 @@ export {
   type ChunkRefResult,
   type CacheChunkInput,
   type SymbolLocation,
-} from './chunk-ref';
+} from "./chunk-ref";
 
 export {
   // Core functions
@@ -44,7 +44,7 @@ export {
   type SemanticLookupOptions,
   type SemanticLookupErrorCode,
   type BatchLookupResult,
-} from './semantic-lookup';
+} from "./semantic-lookup";
 
 export {
   // Main function
@@ -60,7 +60,7 @@ export {
   findSymbolInParseResult,
   extractTypeName,
   isPrimitiveType,
-} from './symbol-context';
+} from "./symbol-context";
 
 export {
   // Main function
@@ -69,7 +69,7 @@ export {
   type ImpactCheckInput,
   type ImpactResult,
   type Dependent,
-} from './impact-check';
+} from "./impact-check";
 
 export {
   // Brain tools
@@ -84,7 +84,7 @@ export {
   type MistakeLogResult,
   type SessionSummaryInput,
   type SessionSummaryResult,
-} from './brain-tools';
+} from "./brain-tools";
 
 export {
   // What changed
@@ -93,16 +93,4 @@ export {
   // Types
   type WhatChangedInput,
   type ChangeInfo,
-} from './what-changed';
-
-export {
-  // Swarm coordination
-  swarmInit,
-  swarmQueryBoard,
-  swarmClaimTask,
-  swarmCompleteTask,
-  swarmSendMessage,
-  swarmReadMessages,
-  swarmLogDecision,
-  swarmToolDefinitions,
-} from './swarm-tools';
+} from "./what-changed";

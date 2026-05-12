@@ -64,7 +64,7 @@ async function main() {
                 if (skillCheck) outputs.push(skillCheck);
 
                 // Session memory injection (after compaction)
-                const memory = await modules[2].injectMemory(event, config);
+                const memory = await modules[2].injectMemory(event);
                 if (memory) outputs.push(memory);
 
                 // Edit history warnings (if file being discussed was edited before)
@@ -78,25 +78,19 @@ async function main() {
             }
 
             case 'precompact': {
-                // PreCompact: save session memory + diagnose session
-                const [memoryModule, diagModule] = await Promise.all([
-                    loadModule('session-memory'),
-                    loadModule('trace-diagnosis')
-                ]);
-                await Promise.all([
-                    memoryModule.saveMemory(event, config, apiKey),
-                    diagModule.diagnoseSession(event, config, apiKey).catch(err => {
-                        if (process.env.DEBUG) process.stderr.write('[trace-diagnosis] ' + err.message + '\n');
-                    })
-                ]);
+                // PreCompact: single LLM call produces both narrative memory + diagnosis,
+                // dispatched to memories/<session>.json and lessons.jsonl respectively.
+                const module = await loadModule('precompact-llm');
+                await module.runPreCompact(event, config, apiKey);
                 break;
             }
 
             case 'post-edit': {
-                // PostToolUse on Write|Edit: format + log operation + enrich
+                // PostToolUse on Write|Edit: format + log operation + impact hint
                 const modules = await Promise.all([
                     loadModule('format-lint'),
-                    loadModule('rolling-log')
+                    loadModule('rolling-log'),
+                    loadModule('impact-hint')
                 ]);
 
                 // Format code
@@ -104,6 +98,15 @@ async function main() {
 
                 // Log the operation
                 await modules[1].logOperation(event, config, apiKey);
+
+                // Emit impact hint for high-impact paths (printed to stdout so
+                // it surfaces as PostToolUse additional context).
+                try {
+                    const hint = await modules[2].emitHint(event, config);
+                    if (hint) console.log(hint);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[impact-hint]', e);
+                }
                 break;
             }
 
