@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(claude code --help)",
+      "Bash(claude code config show)",
+      "Bash(claude code mcp --help)",
+      "Bash(claude code mcp list:*)",
+      "Bash(claude mcp:*)",
+      "Bash(npx -y chrome-devtools-mcp@latest --version)",
+      "mcp__chorus__cancel_chat",
+      "mcp__chorus__create_chat",
+      "mcp__chorus__get_chat_status",
+      "mcp__chorus__list_blocked",
+      "mcp__chorus__list_templates",
+      "mcp__chorus__resume_chat",
+      "mcp__chorus__wait_for_chat"
+    ]
+  },
+  "enableAllProjectMcpServers": false
+}
