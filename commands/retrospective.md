@@ -1,72 +1,45 @@
 ---
-description: Deep cross-session analysis across ALL conversation history — extract meta-learnings spanning projects, tech stacks, and time
+description: Run the deep retrospective across all history (prompts, sessions, edits, tool ops) and present the resulting report.
 ---
 
-# Deep Retrospective Protocol
+You are running the periodic cross-session retrospective. Use this ~every 50 sessions, not every session.
 
-You are running a comprehensive cross-session analysis. Unlike `/evolve` (which reads lessons.jsonl), this reads ALL available data:
-
-- 9,500+ prompts from global history
-- 80+ session memory summaries
-- 7,000+ file edit records
-- 8,600+ tool operation logs
-- 50+ project memory files
-
-This is designed for periodic use (~every 50 sessions) to extract meta-learnings.
-
-## Step 1: Run the Retrospective
-
-Execute the analysis via the unified hook:
+## Step 1: Run
 
 ```bash
 echo '{}' | node ~/.claude/hooks/unified/unified-hook.mjs retrospective
 ```
 
-This will take 30-60 seconds as it:
+Expect 30–60 seconds. If the module returns `success: false`, report the reason and stop.
 
-1. **Extracts** patterns from each data source (local, no LLM)
-2. **Aggregates** cross-session patterns
-3. **Synthesizes** meta-learnings via GPT-4.1 (1M context)
-4. **Generates** a versioned report
-
-## Step 2: Review the Report
-
-If successful, read the generated report:
+## Step 2: Read the report
 
 ```
-Read: ~/.claude/hooks/unified/evolution/retrospective-YYYY-MM-DD.md
+~/.claude/hooks/unified/evolution/retrospective-YYYY-MM-DD.md
 ```
 
-Present each section to the user:
+## Step 3: Present
 
-1. **Efficiency Report** — overall health score and trend
-2. **Meta-Learnings** — non-obvious insights spanning multiple projects
-3. **Working Patterns** — strengths, inefficiencies, blind spots
-4. **Harness Recommendations** — specific changes to improve the setup
+Walk the user through, in order:
+1. Efficiency score and trend.
+2. Meta-learnings — present the top 3. Skip the rest unless the user asks.
+3. Working patterns: strengths, inefficiencies, blind spots.
+4. Harness recommendations — present only the high-priority ones first.
 
-## Step 3: Apply Insights
+Stop after each section and ask if the user wants to drill in. Do not dump the full report.
 
-For each meta-learning or recommendation the user wants to act on:
+## Step 4: Raw data (only on request)
 
-1. **CLAUDE.md changes**: Add new behavioral rules based on observed patterns
-2. **Config changes**: Adjust thresholds, add new settings
-3. **Hook changes**: Modify modules based on tool usage patterns
-4. **Memory updates**: Save key insights to project memory files
-
-## Step 4: Check Raw Data
-
-The raw aggregated data is saved alongside the report:
+If the user wants to drill into a specific pattern, read:
 
 ```
-Read: ~/.claude/hooks/unified/evolution/retrospective-raw-YYYY-MM-DD.json
+~/.claude/hooks/unified/evolution/retrospective-raw-YYYY-MM-DD.json
 ```
 
-Use this to drill into specific patterns (e.g., "which project has the most file churn?").
+Do not read this file unsolicited.
 
 ## Rules
 
-- This is a READ-HEAVY operation — it reads many files but only writes to the evolution/ directory
-- NEVER apply recommendations without user approval
-- Present the most actionable findings first
-- If the LLM synthesis fails, the raw data is still saved — present the aggregated stats directly
-- Compare with previous retrospectives if they exist to track trends
+- This is a read-mostly command. It writes only to `~/.claude/hooks/unified/evolution/`.
+- Do not apply recommendations from the report without explicit user approval — use `/evolve` flow for that.
+- Stop condition: user has decided what (if anything) to act on.

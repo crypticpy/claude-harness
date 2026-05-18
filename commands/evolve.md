@@ -1,71 +1,48 @@
 ---
-description: Run self-evolution analysis - aggregate lessons across sessions and propose harness improvements
+description: Aggregate session lessons and surface proposed harness improvements for user review.
 ---
 
-# Self-Evolution Protocol
+You are running the harness self-evolution analysis. This reads `lessons.jsonl` (written by the trace-diagnosis hook on PreCompact), aggregates patterns, calls the synthesizer, and presents proposals for approval.
 
-You are running the harness self-evolution analysis. This closes the feedback loop: session failures become lessons, lessons become proposals, proposals become improvements.
-
-## How It Works
-
-1. **Collect**: Read all entries from `lessons.jsonl` (written by trace-diagnosis on PreCompact)
-2. **Aggregate**: Group recurring patterns, count frequencies, compute stats
-3. **Synthesize**: Call GPT-4.1 to distill patterns into actionable proposals
-4. **Review**: Present proposals for user approval before any changes
-
-## Step 1: Run Evolution Analysis
-
-Execute the self-evolution module:
+## Step 1: Run the analysis
 
 ```bash
 echo '{}' | node ~/.claude/hooks/unified/unified-hook.mjs evolve
 ```
 
-If the module returns `success: false` due to insufficient data, explain what's needed:
+If the module returns `success: false`, report the reason to the user and stop. Common reasons: not enough sessions have hit PreCompact yet, or no API key is configured.
 
-- Sessions need to hit the PreCompact hook (auto-compact at ~200K tokens)
-- The trace-diagnosis module analyzes the transcript and writes lessons
-- More sessions = better pattern detection
+## Step 2: Read the proposals
 
-## Step 2: Review Proposals
-
-If proposals were generated, read the proposals file:
+If the run succeeded, read:
 
 ```
-Read: ~/.claude/hooks/unified/evolution/proposals.md
+~/.claude/hooks/unified/evolution/proposals.md
 ```
 
-Present each proposal to the user with:
+## Step 3: Present
 
-- The proposal title and target file
-- What change is being suggested and why
-- Confidence level (high/medium/low)
-- Your own assessment: do you agree with the proposal?
+For each proposal, show the user:
+- title, target file, the exact change, confidence level
+- your own one-line take: agree, disagree, or "need more data"
 
-## Step 3: Apply Approved Changes
+Present proposals one at a time. Wait for an explicit approve/reject from the user before moving to the next.
 
-For each proposal the user approves:
+## Step 4: Apply approved changes
 
-1. Read the target file
-2. Make the specific change described in the proposal
-3. Update the proposal status from `[ ] Pending review` to `[x] Applied (date)`
+For each approval:
+1. Read the target file.
+2. Make the change exactly as described in the proposal.
+3. In `proposals.md`, change the status line from `[ ] Pending review` to `[x] Applied <YYYY-MM-DD>`.
 
-For rejected proposals, update status to `[-] Rejected (date) - reason`
+For each rejection: change the status line to `[-] Rejected <YYYY-MM-DD> — <one-line reason from the user>`.
 
-## Step 4: Evolution History
+## Step 5: History (optional)
 
-Check the evolution history to track improvement over time:
-
-```
-Read: ~/.claude/hooks/unified/evolution/history.jsonl
-```
-
-Report trends: is the harness getting more efficient? Are the same patterns recurring?
+If the user asks about trends, read `~/.claude/hooks/unified/evolution/history.jsonl` and report what changed across recent runs. Do not open it unsolicited.
 
 ## Rules
 
-- NEVER apply proposals without explicit user approval
-- Present proposals one at a time for focused review
-- If a proposal conflicts with existing CLAUDE.md rules, flag the conflict
-- Track all decisions in the proposals file for future reference
-- After applying changes, suggest running /freview to validate
+- Never apply a proposal without explicit user approval.
+- If a proposal contradicts `CLAUDE.md`, surface the conflict and ask which wins before applying.
+- Stop condition: every proposal has an approve/reject status logged.
