@@ -1,6 +1,6 @@
 {
-  "version": "1.1",
-  "description": "Canonical skill activation triggers. Controls when skills automatically suggest or block actions. Only real skills with corresponding SKILL.md files or slash commands are listed here.",
+  "version": "1.2",
+  "description": "Canonical skill activation triggers. Tuned 2026-04-24: narrowed keywords to reduce false positives during planning/discussion turns. Goal is high-precision triggers for explicit implementation requests, not broad pattern-matching.",
   "skills": {
     "frontend-design": {
       "type": "domain",
@@ -9,32 +9,31 @@
       "description": "Create distinctive, production-grade frontend interfaces with high design quality. Generates creative, polished code that avoids generic AI aesthetics.",
       "promptTriggers": {
         "keywords": [
-          "design",
-          "UI design",
           "frontend design",
           "interface design",
-          "visual design",
-          "aesthetic",
-          "creative design",
           "polished UI",
           "distinctive interface",
-          "beautiful UI",
-          "modern design",
           "design system",
-          "component design",
-          "web design",
-          "user interface",
-          "visual appeal",
-          "design quality"
+          "build UI",
+          "build a UI",
+          "build the UI",
+          "build a component",
+          "build the component",
+          "create a component",
+          "create the component"
         ],
         "intentPatterns": [
-          "(design|create|build).*?(beautiful|polished|creative|distinctive|modern).*?(UI|interface|component|page)",
-          "(UI|interface|frontend).*?(design|aesthetic|visual)",
-          "(build|create|implement).*?(web|component|page|application).*?(design|aesthetic)",
-          "design.*?(component|interface|page|application|system)",
-          "(make it|create).*?(beautiful|polished|creative|distinctive|modern)",
-          "(avoid|prevent).*?(generic|bland|cookie-cutter).*?(design|aesthetic)",
-          "(improve|enhance|elevate).*?(design|aesthetic|visual)"
+          "(build|create|implement)\\s+(a\\s+|the\\s+)?(component|page|interface|UI|frontend)",
+          "(make|design)\\s+(it|this|a|the)\\s+(beautiful|polished|distinctive|production-grade)",
+          "(avoid|prevent)\\s+(generic|bland|cookie-cutter|AI)\\s+(design|aesthetic|look)"
+        ],
+        "excludePatterns": [
+          "plan",
+          "planning",
+          "mockup",
+          "mock up",
+          "discuss",
+          "thinking about"
         ]
       }
     },
@@ -42,59 +41,43 @@
       "type": "proactive",
       "enforcement": "suggest",
       "priority": "high",
-      "description": "Use impact_check before editing, semantic_lookup for exploration, brain_search for recalling patterns. Proactive context gathering.",
+      "description": "Use impact_check before editing public APIs, brain_search for prior lessons. Triggers only on explicit refactor/rename/delete or impact-check requests.",
       "promptTriggers": {
         "keywords": [
-          "edit file",
-          "edit the",
-          "modify file",
-          "modify the",
-          "change file",
-          "update file",
           "refactor",
           "rename function",
           "rename class",
+          "rename method",
           "delete function",
           "remove function",
+          "delete class",
+          "remove class",
           "breaking change",
           "downstream",
           "consumers",
           "dependents",
           "who uses",
           "what calls",
+          "what depends on",
           "impact check",
           "impact_check",
-          "explore",
-          "exploration",
-          "investigate",
-          "investigation",
-          "understand",
-          "how does",
-          "how do",
-          "trace",
-          "follow",
-          "dig into",
-          "look into",
-          "research",
-          "analyze codebase",
-          "Explore agent",
-          "exploration agent"
+          "brain_search"
         ],
         "intentPatterns": [
-          "(edit|modify|change|update)\\s+(the\\s+)?(file|function|class|module|component)",
-          "(refactor|rename|delete|remove).*?(function|class|method|variable|file)",
-          "(check|find|show).*?(impact|dependents|consumers|callers)",
-          "what.*?(uses|calls|depends on|imports)",
-          "who.*?(uses|calls|imports)",
-          "(before|safe to).*?(edit|modify|change|delete)",
-          "breaking.*?(change|modification)",
-          "(explore|investigate|understand|analyze).*?(code|codebase|file|function|system|architecture)",
-          "(how does|how do).*?(work|function|operate)",
-          "(trace|follow|dig into|look into).*?(code|flow|logic|implementation)",
-          "(launch|use|invoke).*?(explore|exploration).*?agent",
-          "(research|understand).*?(pattern|convention|approach)"
+          "(refactor|rename|delete|remove)\\s+(the\\s+)?(function|class|method|module)\\s+\\w+",
+          "(check|find|show)\\s+(the\\s+)?(impact|dependents|consumers|callers)\\s+of",
+          "what\\s+(uses|calls|depends on|imports)\\s+\\w+",
+          "who\\s+(uses|calls|imports)\\s+\\w+",
+          "before\\s+(I\\s+)?(edit|modify|delete|rename)\\s+\\w+",
+          "is it safe to (delete|remove|rename)"
         ],
-        "excludePatterns": ["^commit", "^git", "commit.*?change"],
+        "excludePatterns": [
+          "^commit",
+          "^git",
+          "commit.*?change",
+          "plan",
+          "mockup"
+        ],
         "mcpTools": [
           "impact_check",
           "semantic_lookup",
@@ -102,7 +85,7 @@
           "what_changed",
           "brain_search"
         ],
-        "proactiveHint": "Use semantic_lookup for file summaries, impact_check before edits, brain_search for recalled patterns"
+        "proactiveHint": "About to refactor/rename/delete? Run impact_check first to find downstream consumers."
       }
     },
     "evolve": {
@@ -113,21 +96,15 @@
       "action": "Use the /evolve slash command (type it directly), NOT the Skill tool.",
       "promptTriggers": {
         "keywords": [
-          "evolve",
-          "evolution",
-          "self-improvement",
+          "/evolve",
           "harness improvement",
-          "lesson review",
-          "pattern analysis",
-          "optimize harness",
           "improve hooks",
-          "retrospective"
+          "evolve the harness",
+          "analyze lessons across sessions"
         ],
         "intentPatterns": [
-          "(evolve|evolution|improve).*?(harness|hooks|config)",
-          "(review|analyze).*?(lessons|patterns|sessions)",
-          "(retrospective|retro).*?(session|harness)",
-          "what.*?(learn|improve|fix).*?(across|from).*?sessions"
+          "(evolve|improve)\\s+(the\\s+)?(harness|hooks|config)",
+          "(review|analyze)\\s+lessons\\s+across\\s+sessions"
         ]
       }
     },
@@ -135,28 +112,29 @@
       "type": "slash-command",
       "enforcement": "suggest",
       "priority": "high",
-      "description": "Final review - spawn completeness and code review agents with ultrathink against current session. This is a slash command, not a Skill tool skill.",
+      "description": "Final review - spawn completeness and code review agents against current session. Slash command, not Skill tool.",
       "action": "Use the /freview slash command (type it directly), NOT the Skill tool.",
       "promptTriggers": {
         "keywords": [
-          "freview",
+          "/freview",
           "final review",
           "completeness check",
-          "code review",
-          "review session",
-          "quality check",
-          "review agents"
+          "ready to commit",
+          "ready to ship",
+          "ready for review"
         ],
         "intentPatterns": [
-          "(final|complete).*?review",
-          "(spawn|run).*?(completeness|review).*?agent",
-          "(check|verify).*?(completeness|quality)",
-          "review.*?(session|work|implementation)"
+          "(final|complete)\\s+review",
+          "(spawn|run)\\s+(the\\s+)?(completeness|review)\\s+agents?",
+          "ready\\s+(to|for)\\s+(commit|ship|merge|review)"
         ]
       }
     }
   },
   "notes": {
+    "tuning_history": {
+      "2026-04-24": "Narrowed all triggers. Dropped broad keywords (edit/modify/change/update/design/UI/explore/investigate/understand) that matched planning conversations. Added excludePatterns for 'plan' and 'mockup'. Goal: trigger only on explicit imperative implementation requests."
+    },
     "enforcement_types": {
       "suggest": "Skill suggestion appears but doesn't block execution",
       "block": "Requires skill to be used before proceeding (guardrail)",
@@ -171,12 +149,6 @@
       "domain": "Standard skill invoked via the Skill tool",
       "proactive": "Skill that provides proactive hints and MCP tool suggestions",
       "slash-command": "Slash command invoked directly (e.g., /freview), NOT via the Skill tool"
-    },
-    "skill_overview": {
-      "frontend-design": "UI/UX design - triggers on design, aesthetic, polished interface requests",
-      "context-layer": "PROACTIVE - triggers on file edits to suggest impact_check for finding downstream consumers before breaking changes",
-      "evolve": "SLASH COMMAND - self-evolution via /evolve, aggregates lessons and proposes harness improvements",
-      "freview": "SLASH COMMAND - final review via /freview, spawns completeness and code review agents"
     }
   }
 }
