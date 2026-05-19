@@ -6,17 +6,19 @@ set -euo pipefail
 #
 # Installs the Memento hook system, slash commands, agents,
 # skills, context-layer plugin, and status line into ~/.claude.
+# Optionally bootstraps system-level prereqs (brew, npm globals,
+# sidecar repos) via scripts/bootstrap-mac.sh.
 #
 # Usage:
 #   git clone <repo-url> ~/.claude
-#   cd ~/.claude && ./install.sh
-#
-# Or on a machine where ~/.claude already exists:
-#   ./install.sh  (run from the repo root)
+#   cd ~/.claude && ./install.sh                # install harness only
+#   cd ~/.claude && ./install.sh --bootstrap    # also run fresh-Mac bootstrap
 # ──────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
+BOOTSTRAP=false
+[[ "${1:-}" == "--bootstrap" ]] && BOOTSTRAP=true
 
 # Colors
 RED='\033[0;31m'
@@ -69,6 +71,17 @@ fi
 
 ok "Prerequisites met (node v$(node -v | tr -d 'v'), npm v$(npm -v))"
 
+# ── Optional: fresh-Mac bootstrap ────────────────────────────
+if $BOOTSTRAP; then
+    BOOTSTRAP_SCRIPT="$CLAUDE_DIR/scripts/bootstrap-mac.sh"
+    if [[ -x "$BOOTSTRAP_SCRIPT" ]]; then
+        info "Running fresh-Mac bootstrap…"
+        bash "$BOOTSTRAP_SCRIPT"
+    else
+        warn "bootstrap-mac.sh not found or not executable — skipping"
+    fi
+fi
+
 # ── Generate settings.json from template ─────────────────────
 info "Generating settings.json from template..."
 
@@ -85,22 +98,19 @@ if [[ -f "$SETTINGS" ]]; then
     cp "$SETTINGS" "$SETTINGS.pre-install.$(date +%Y%m%d-%H%M%S)"
 fi
 
-# Replace __HOME__ placeholder with actual home directory
-sed "s|__HOME__|$HOME|g" "$TEMPLATE" > "$SETTINGS"
-ok "Paths configured for $HOME"
+# Template uses $HOME directly (Claude Code expands env vars in hook commands)
+# so a straight copy suffices. MCP servers are registered separately below.
+cp "$TEMPLATE" "$SETTINGS"
+ok "settings.json materialized"
 
-# Handle Ref API key
-if grep -q '__REF_API_KEY__' "$SETTINGS" 2>/dev/null; then
-    if [[ -n "${REF_API_KEY:-}" ]]; then
-        sed -i.bak "s|__REF_API_KEY__|$REF_API_KEY|g" "$SETTINGS"
-        rm -f "$SETTINGS.bak"
-        ok "Ref API key set from \$REF_API_KEY"
-    else
-        warn "Ref MCP server has a placeholder API key"
-        echo "       Set it later:"
-        echo "       export REF_API_KEY=your-key-here && ~/.claude/install.sh"
-        echo "       Or: sed -i '' 's|__REF_API_KEY__|your-key|' ~/.claude/settings.json"
-    fi
+# ── Materialize settings.local.json from template ────────────
+LOCAL_TEMPLATE="$CLAUDE_DIR/settings.local.json.template"
+LOCAL_SETTINGS="$CLAUDE_DIR/settings.local.json"
+if [[ -f "$LOCAL_TEMPLATE" && ! -f "$LOCAL_SETTINGS" ]]; then
+    cp "$LOCAL_TEMPLATE" "$LOCAL_SETTINGS"
+    ok "settings.local.json materialized from template"
+elif [[ -f "$LOCAL_SETTINGS" ]]; then
+    ok "settings.local.json already present (kept as-is)"
 fi
 
 # ── Create runtime directories ───────────────────────────────
@@ -196,6 +206,53 @@ else
     error "Some modules failed — check Node.js version and dependencies"
 fi
 
+# ── Register MCP servers (idempotent) ────────────────────────
+MCP_DATA="$CLAUDE_DIR/mcp-servers.json"
+if command -v claude >/dev/null 2>&1 && [[ -f "$MCP_DATA" ]]; then
+    info "Registering MCP servers from mcp-servers.json…"
+
+    # context-layer
+    CONTEXT_LAYER_JS="$CLAUDE_DIR/plugins/context-layer/dist/mcp-server.js"
+    if [[ -f "$CONTEXT_LAYER_JS" ]]; then
+        claude mcp remove context-layer 2>/dev/null || true
+        claude mcp add context-layer node "$CONTEXT_LAYER_JS" >/dev/null 2>&1 \
+            && ok "  context-layer registered" \
+            || warn "  context-layer registration failed"
+    else
+        warn "  context-layer dist not built — skipping registration"
+    fi
+
+    # Ref (HTTP, needs REF_API_KEY)
+    if [[ -n "${REF_API_KEY:-}" ]]; then
+        claude mcp remove Ref 2>/dev/null || true
+        claude mcp add --transport http Ref "https://api.ref.tools/mcp?apiKey=${REF_API_KEY}" >/dev/null 2>&1 \
+            && ok "  Ref registered" \
+            || warn "  Ref registration failed"
+    else
+        warn "  REF_API_KEY not set — Ref MCP skipped"
+    fi
+
+    # chorus / polyphony (resolve dynamically)
+    CHORUS_BIN="$(command -v chorus 2>/dev/null || command -v polyphony 2>/dev/null || true)"
+    if [[ -n "$CHORUS_BIN" ]]; then
+        # The bin is a #!/usr/bin/env node script that takes 'mcp' as arg
+        claude mcp remove chorus 2>/dev/null || true
+        claude mcp add chorus node "$CHORUS_BIN" mcp >/dev/null 2>&1 \
+            && ok "  chorus registered ($(basename $CHORUS_BIN))" \
+            || warn "  chorus registration failed"
+    else
+        warn "  chorus/polyphony not on PATH — skipping (run ./install.sh --bootstrap to install)"
+    fi
+else
+    warn "claude CLI or mcp-servers.json missing — MCP registration skipped"
+fi
+
+# ── Final verification: print live MCP list ──────────────────
+if command -v claude >/dev/null 2>&1; then
+    info "Active MCP servers:"
+    claude mcp list 2>&1 | sed 's/^/    /' | grep -v 'Checking MCP server health' || true
+fi
+
 # ── Summary ──────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════╗"
@@ -204,10 +261,17 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Installed:"
 echo "    - Unified hook system (Memento architecture)"
-echo "    - Slash commands: /plan, /evolve, /retrospective, /freview"
-echo "    - Custom agents: principal-code-reviewer, final-review-completeness"
+echo "    - Slash commands: /plan, /evolve, /retrospective, /freview, /chorus"
+echo "    - Custom agents: principal-code-reviewer, final-review-completeness, pr-babysitter"
+echo "    - Skills: babysit-pr, frontend-design"
 echo "    - Status line with context tracking"
 echo "    - Context-layer MCP plugin"
+echo "    - First-party MCP servers (context-layer, Ref, chorus) registered"
 echo ""
+if ! $BOOTSTRAP; then
+    echo "  Fresh Mac? Run: ./install.sh --bootstrap"
+    echo "  (installs tokf, cf-approve, claude-deck, chorus, writes env vars to ~/.zshrc)"
+    echo ""
+fi
 echo "  Start a new Claude Code session to activate."
 echo ""

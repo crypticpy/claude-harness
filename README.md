@@ -76,28 +76,70 @@ Stop             → quality gates, verification check
 
 ## Setup
 
-### New Machine Install
+### Fresh Mac — end to end
+
+One-shot bootstrap that installs everything: harness, tokf, cf-approve, claude-deck, chorus/polyphony, MCP registrations, and shell env vars.
 
 ```bash
-git clone git@github.com:crypticpy/claude-harness.git ~/.claude
+# Apple Command Line Tools + Homebrew + base CLI
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install node gh
+gh auth login                        # needed to clone private claude-deck repo
+
+# Required env vars (these get persisted to ~/.zshrc by --bootstrap)
+export OPENROUTER_API_KEY=sk-or-...
+export REF_API_KEY=ref-...
+
+# Clone harness and bootstrap everything
+git clone https://github.com/crypticpy/claude-harness.git ~/.claude
 cd ~/.claude
-./install.sh
+./install.sh --bootstrap
 ```
 
-### Environment Variables
+`--bootstrap` runs `scripts/bootstrap-mac.sh` first, which:
+
+- `brew install mpecan/tokf/tokf` (token-output filter)
+- `npm i -g @abdo-el-mobayad/claude-code-fast-permission-hook` (provides `cf-approve`)
+- Clones `crypticpy/claude-deck` to `~/Projects/claude-deck` and runs its `./scripts/install.sh`
+- Clones `crypticpy/chorus` to `~/Projects/chorus`, runs `npm install`, then `npm link` (provides both `chorus` and `polyphony` on PATH)
+- Appends `OPENROUTER_API_KEY` and `REF_API_KEY` to `~/.zshrc` if set in the current shell and not already present
+
+Then `install.sh` itself:
+
+- Materializes `settings.json` from `settings.template.json`
+- Materializes `settings.local.json` from `settings.local.json.template` if absent
+- Builds the `context-layer` MCP plugin
+- Registers the three first-party MCP servers (`context-layer`, `Ref`, `chorus`) idempotently via `claude mcp add`
+- Smoke-tests every hook module
+- Prints the live `claude mcp list` output
+
+After bootstrap, sign in to the claude.ai-hosted MCP servers from inside Claude Code (`/mcp`) if you use them: Vercel, Hugging Face, Google Drive, Google Calendar, Gmail.
+
+### Upgrading an existing machine
+
+```bash
+cd ~/.claude && git pull && ./install.sh
+```
+
+No `--bootstrap` needed once tokf, cf-approve, and the sidecar repos are already present.
+
+### Environment variables
 
 | Variable             | Required         | Purpose                                    |
 | -------------------- | ---------------- | ------------------------------------------ |
 | `OPENROUTER_API_KEY` | For LLM features | Session memory, trace diagnosis, evolution |
 | `REF_API_KEY`        | Optional         | Ref MCP server access                      |
 
-### Optional Integrations
+### External integrations
 
-The harness detects and integrates with these if installed:
+Referenced by hook commands; installed by `scripts/bootstrap-mac.sh` and detected (but not installed) by `install.sh`:
 
-- **Claude Deck** (`~/.claude-deck/`) — Visual dashboard hooks
-- **tokf** (`~/Library/Application Support/tokf/`) — Token usage tracking
-- **Formatters** — `black`, `gofmt`, `rustfmt`, `prettier` (used by auto-format on edit)
+- **Claude Deck** (private repo `crypticpy/claude-deck`, installs to `~/.claude-deck/`) — visual dashboard hooks
+- **tokf** (Homebrew `mpecan/tokf/tokf`, data dir `~/Library/Application Support/tokf/`) — token-output filter
+- **cf-approve** (npm `@abdo-el-mobayad/claude-code-fast-permission-hook`) — fast permission decisions
+- **chorus / polyphony** (public repo `crypticpy/chorus`, package `@crypticpy/polyphony`) — MCP server for chat orchestration
+- **Formatters** (`black`, `gofmt`, `rustfmt`, `prettier`) — auto-format on edit (no auto-install)
 
 ## LLM Configuration
 

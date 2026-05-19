@@ -1,0 +1,28 @@
+{
+  "$schema": "./mcp-servers.schema.json",
+  "_comment": "First-party MCP servers registered by install.sh via `claude mcp add`. Read as data; do not include secrets — secrets come from env vars at install time.",
+  "servers": [
+    {
+      "name": "context-layer",
+      "type": "stdio",
+      "command": "node",
+      "args": ["${HOME}/.claude/plugins/context-layer/dist/mcp-server.js"],
+      "requires_env": [],
+      "skip_if_missing": "${HOME}/.claude/plugins/context-layer/dist/mcp-server.js"
+    },
+    {
+      "name": "Ref",
+      "type": "http",
+      "url": "https://api.ref.tools/mcp?apiKey=${REF_API_KEY}",
+      "requires_env": ["REF_API_KEY"]
+    },
+    {
+      "name": "chorus",
+      "type": "stdio",
+      "command": "node",
+      "args_resolver": "chorus_or_polyphony_bin",
+      "args_resolver_comment": "Resolves to: $(command -v chorus) or $(command -v polyphony), then appends 'mcp'. Skip if neither exists.",
+      "requires_command_any": ["chorus", "polyphony"]
+    }
+  ]
+}
