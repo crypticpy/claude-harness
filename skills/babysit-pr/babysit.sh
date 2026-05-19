@@ -38,17 +38,23 @@ TICK="${TICK_SECONDS:-90}"
 CODEX_WINDOW_S="${CODEX_WINDOW_S:-1500}"
 STATE_DIR="${STATE_DIR:-${MAIN}/.claude/state}"
 EVENTS_FILE="${EVENTS_FILE:-/tmp/babysit-pr${PR}.events.jsonl}"
+# Max consecutive `gh pr view` failures before we treat the babysit as hung and
+# exit 3. 10 ticks @ 90s = 15 min of total gh outage tolerance.
+GH_FAILURE_MAX="${GH_FAILURE_MAX:-10}"
 
 STATE="${STATE_DIR}/pr-${PR}.json"
 DEADLINE=$(( $(date +%s) + CODEX_WINDOW_S ))
 QUIET_TICKS=0
+GH_FAILURES=0
 SEEN_FILE=$(mktemp)
 trap 'rm -f "$SEEN_FILE"' EXIT
 
 mkdir -p "$STATE_DIR"
 : > "$EVENTS_FILE"  # truncate so each babysit run starts clean
-printf '{"pr_number": %s, "started_at": "%s", "merged": false, "auto_merge": %s}\n' \
-  "$PR" "$(date -u +%FT%TZ)" "$AUTO_MERGE" > "$STATE"
+# State file is read by /address-pr-comments, so include the fields it needs
+# (repo, branch, worktree, main) — not just the bookkeeping ones.
+printf '{"pr_number": %s, "started_at": "%s", "merged": false, "auto_merge": %s, "repo": "%s", "branch": "%s", "main": "%s", "worktree": "%s"}\n' \
+  "$PR" "$(date -u +%FT%TZ)" "$AUTO_MERGE" "$REPO" "$BRANCH" "$MAIN" "$WORKTREE" > "$STATE"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
@@ -77,9 +83,15 @@ while :; do
 
   pr_state=$(gh pr view "$PR" --repo "$REPO" --json state,mergeable,statusCheckRollup 2>/dev/null || true)
   if [[ -z "$pr_state" ]]; then
-    log "gh pr view returned nothing, retrying"
+    GH_FAILURES=$(( GH_FAILURES + 1 ))
+    if [[ "$GH_FAILURES" -ge "$GH_FAILURE_MAX" ]]; then
+      log "FATAL: $GH_FAILURES consecutive 'gh pr view' failures — giving up. Check 'gh auth status' and re-invoke."
+      exit 3
+    fi
+    log "gh pr view returned nothing (failure $GH_FAILURES/$GH_FAILURE_MAX), retrying"
     sleep "$TICK"; continue
   fi
+  GH_FAILURES=0
 
   state=$(echo "$pr_state" | jq -r '.state')
   case "$state" in
@@ -139,9 +151,20 @@ while :; do
   log "tick: ci=[$ci_summary] mergeable=$mergeable quiet=$QUIET_TICKS past_deadline=$past_deadline"
 
   if [[ "$AUTO_MERGE" == "true" && "$past_deadline" -eq 1 && "$QUIET_TICKS" -ge 2 ]]; then
-    failing=$(echo "$pr_state" | jq -r '.statusCheckRollup // [] | map(select(.conclusion == "FAILURE")) | length')
+    # Anything that hasn't completed yet (no conclusion AND not skipped/neutral) is "pending".
     pending=$(echo "$pr_state" | jq -r '.statusCheckRollup // [] | map(select(.conclusion == null and (.status == "PENDING" or .status == "IN_PROGRESS" or .status == "QUEUED"))) | length')
-    if [[ "$failing" == "0" && "$pending" == "0" && "$mergeable" != "CONFLICTING" ]]; then
+    # Anything that completed with a non-OK terminal state blocks the merge.
+    # OK conclusions are SUCCESS, SKIPPED, NEUTRAL. Everything else (FAILURE,
+    # CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, STALE, ...) is
+    # treated as failing. The old gate only counted FAILURE which let
+    # CANCELLED / TIMED_OUT checks slip through.
+    non_ok=$(echo "$pr_state" | jq -r '
+      .statusCheckRollup // []
+      | map(.conclusion // empty)
+      | map(select(. != "SUCCESS" and . != "SKIPPED" and . != "NEUTRAL"))
+      | length
+    ')
+    if [[ "$non_ok" == "0" && "$pending" == "0" && "$mergeable" != "CONFLICTING" ]]; then
       log "Conditions met — squash-merging PR #$PR with --delete-branch"
       if gh pr merge "$PR" --repo "$REPO" --squash --delete-branch 2>&1 | tee -a "/tmp/babysit-pr${PR}.log"; then
         log "Merge command succeeded; will verify on next tick"
@@ -149,7 +172,7 @@ while :; do
         log "Merge command failed; will retry next tick"
       fi
     else
-      log "Not ready: failing=$failing pending=$pending mergeable=$mergeable. Waiting."
+      log "Not ready: non_ok=$non_ok pending=$pending mergeable=$mergeable. Waiting."
     fi
   fi
 

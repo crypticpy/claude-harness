@@ -81,14 +81,27 @@ In either case, the worktree path (if any) is captured for `/babysit-pr` so post
 
 ### 5. Move changes into the worktree (only if Step 4 created a new worktree)
 
+`git diff` only captures **tracked** changes — brand-new untracked files would be dropped if you just patch. Handle both:
+
 ```bash
-git -C <current-dir> diff > /tmp/ship-pr-<slug>.patch
-git -C <current-dir> diff --cached >> /tmp/ship-pr-<slug>.patch
-git -C .worktrees/<slug> apply /tmp/ship-pr-<slug>.patch
-git -C <current-dir> checkout -- .   # reset the original dir
+# Tracked changes (modified + staged): patch into the worktree
+git -C <current-dir> diff HEAD > /tmp/ship-pr-<slug>.patch
+if [[ -s /tmp/ship-pr-<slug>.patch ]]; then
+  git -C .worktrees/<slug> apply /tmp/ship-pr-<slug>.patch
+fi
+
+# Untracked files: copy them in with their parent directories preserved
+( cd <current-dir> && git ls-files --others --exclude-standard -z ) | \
+  while IFS= read -r -d '' f; do
+    mkdir -p ".worktrees/<slug>/$(dirname "$f")"
+    cp -p "<current-dir>/$f" ".worktrees/<slug>/$f"
+  done
+
+git -C <current-dir> checkout -- .   # reset tracked changes in original dir (ASK FIRST)
+# (Untracked files in original dir are NOT removed automatically — let the user decide.)
 ```
 
-Only do the checkout reset if the user agrees — ask before destructive action. If unsure, leave the original dir alone and continue — the patch is in the worktree.
+Only run the checkout reset if the user agrees — ask before destructive action. If unsure, leave the original dir alone and continue — the changes are already in the worktree.
 
 ### 6. Validate
 

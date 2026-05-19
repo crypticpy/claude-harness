@@ -50,7 +50,7 @@ Fetch the full comment body for context:
 - For `issues/<N>/comments` (issue/PR-level comments): `gh api repos/<REPO>/issues/comments/<id>`
 - For `pulls/<N>/reviews` (review summaries): `gh api repos/<REPO>/pulls/<N>/reviews/<id>`
 
-**Filter out non-actionable noise**: pure status updates ("@coderabbitai is reviewing"), vercel deploy bot summaries, Greptile trial-limit messages, sourcery "looks great" no-op approvals. Mark those as `dismissed: noise` in your processing log without posting anything.
+**Filter out non-actionable noise**: pure status updates ("@coderabbitai is reviewing"), Vercel deploy bot summaries, Greptile trial-limit messages, Sourcery "looks great" no-op approvals. Mark those as `dismissed: noise` in your processing log without posting anything.
 
 ### 4. Classify each actionable comment
 
