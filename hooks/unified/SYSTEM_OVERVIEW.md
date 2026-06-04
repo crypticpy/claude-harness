@@ -5,12 +5,14 @@
 ## The Problem
 
 Claude Code's context window compacts every ~154K tokens. After compaction, Claude loses detailed memory of:
+
 - What files were edited and why
 - Specific bugs that were fixed
 - Design decisions that were made
 - Failed approaches that were tried
 
 This leads to:
+
 - Re-introducing bugs that were already fixed
 - Asking the same questions multiple times
 - Forgetting architectural decisions
@@ -21,9 +23,9 @@ This leads to:
 We've built a **dual-memory system**:
 
 1. **Claude's Active Memory** - Current context window (~154K tokens, compacts regularly)
-2. **Memento Advisor** - GPT-4.1 with 1M token context, maintains perfect recall of ALL operations
+2. **Memento Advisor** - gpt-5.4-mini with large context, maintains perfect recall of ALL operations
 
-Think of GPT-4.1 as Claude's Leonard (from Memento) - a trusted friend who never forgets and can be consulted anytime.
+Think of gpt-5.4-mini as Claude's Leonard (from Memento) - a trusted friend who never forgets and can be consulted anytime.
 
 ---
 
@@ -55,10 +57,10 @@ Think of GPT-4.1 as Claude's Leonard (from Memento) - a trusted friend who never
                  │
                  ▼
         ┌────────────────┐
-        │   GPT-4.1      │
+        │  gpt-5.4-mini  │
         │   Memento      │
         │   Advisor      │
-        │  (1M tokens)   │
+        │  (recall)      │
         └────────────────┘
 ```
 
@@ -67,6 +69,7 @@ Think of GPT-4.1 as Claude's Leonard (from Memento) - a trusted friend who never
 ## How It Works: Event Flow
 
 ### 1. **Session Start**
+
 ```
 User starts Claude Code
     ↓
@@ -76,25 +79,32 @@ Injects: Git status + Active TODOs
 ```
 
 **What Claude Sees:**
+
 ```markdown
 ## 🚀 Session Context
 
 ### Uncommitted Changes
 ```
- M src/auth.ts
- M tests/auth.test.ts
+
+M src/auth.ts
+M tests/auth.test.ts
+
 ```
 
 ### Active TODOs
 ```
-src/auth.ts:42:  TODO: Add rate limiting
-src/api.ts:156:  TODO: Improve error messages
+
+src/auth.ts:42: TODO: Add rate limiting
+src/api.ts:156: TODO: Improve error messages
+
 ```
+
 ```
 
 ---
 
 ### 2. **User Prompt Submission**
+
 ```
 User: "Fix the auth bug"
     ↓
@@ -112,11 +122,13 @@ All outputs injected into Claude's context BEFORE it sees the prompt
 **Example Injections:**
 
 **Context Report:**
+
 ```
 [🟢 45K/154K (29%)]
 ```
 
 **Skill Activation:**
+
 ```
 🎯 SKILL ACTIVATION CHECK
 
@@ -131,6 +143,7 @@ ACTION: Use Skill tool BEFORE responding
 ```
 
 **Edit History Warning:**
+
 ```
 📝 FILE HISTORY: `src/auth.ts` has been edited 3× this session
 Recent changes:
@@ -140,6 +153,7 @@ Recent changes:
 ```
 
 **Session Memory (after compaction):**
+
 ```xml
 <session-memory>
 Compaction #1 | Session: 2h 15m
@@ -147,8 +161,8 @@ Compaction #1 | Session: 2h 15m
 Project: Working on authentication system in main codebase
 Direction: Fixing rate limiting bugs and improving error handling
 
-Narrative: Started by investigating rate limit bypass. Discovered token validation 
-was incorrectly handling expired tokens. Implemented proper expiration checks and 
+Narrative: Started by investigating rate limit bypass. Discovered token validation
+was incorrectly handling expired tokens. Implemented proper expiration checks and
 improved error messages.
 
 History:
@@ -162,6 +176,7 @@ History:
 ---
 
 ### 3. **File Edit**
+
 ```
 Claude edits src/auth.ts
     ↓
@@ -169,7 +184,7 @@ PostToolUse hook runs (unified-hook.mjs post-edit)
     ↓
 Two things happen:
     1. Auto-format (prettier/black/etc)
-    2. Log operation + background enrichment
+    2. Log operation locally (no LLM call)
 ```
 
 **What Happens:**
@@ -180,6 +195,7 @@ Two things happen:
    - Code is formatted before Claude sees the result
 
 2. **Rolling Log** (background, async)
+
    ```json
    {
      "timestamp": "2026-01-19T07:14:51.000Z",
@@ -195,6 +211,7 @@ Two things happen:
    ```
 
 3. **Edit Tracking** (background, async)
+
    ```json
    {
      "files": {
@@ -216,7 +233,7 @@ Two things happen:
                },
                {
                  "timestamp": "2026-01-19T07:14:51Z",
-                 "summary": null  // Will be enriched in background
+                 "summary": null // Recorded locally; no LLM enrichment
                }
              ]
            }
@@ -226,14 +243,15 @@ Two things happen:
    }
    ```
 
-4. **Background Enrichment** (async, non-blocking)
-   - Calls GPT-4o-mini with the edit details
-   - Generates 1-sentence summary (max 80 chars)
-   - Updates the edit entry in the database
+4. **No LLM call on edits** (`rolling_log.backgroundEnrichment = false`)
+   - The rolling log records each edit locally (timestamp, tool, file, counts)
+   - Zero LLM cost per edit
+   - Per-edit summaries are no longer generated
 
 ---
 
 ### 4. **Turn End**
+
 ```
 Claude finishes responding
     ↓
@@ -245,6 +263,7 @@ Quality gates execute:
 ```
 
 **Why End-of-Turn?**
+
 - Runs once per conversation turn instead of after every single edit
 - Faster feedback loop
 - Less interruption during multi-file changes
@@ -252,6 +271,7 @@ Quality gates execute:
 ---
 
 ### 5. **Context Compaction**
+
 ```
 Context reaches ~154K tokens
     ↓
@@ -261,11 +281,12 @@ PreCompact hook runs (unified-hook.mjs precompact)
     ↓
 Session Memory module:
     1. Reads transcript since last compaction
-    2. Calls GPT-4o-mini to extract:
+    2. Calls gpt-5-mini (one combined call) to extract:
        - Project context (1 line)
        - Overall direction (1-2 sentences)
-       - 3-5 key points
+       - 1-4 new milestones (append-only punch list)
        - Long-term narrative (2-3 sentences)
+       (same call also produces the efficiency diagnosis)
     3. Saves to memories/{session-id}.json
     ↓
 Claude Code performs compaction
@@ -275,36 +296,40 @@ On next prompt, session memory is re-injected
 
 **Memory Evolution:**
 
-*After First Compaction:*
+_After First Compaction:_
+
 ```json
 {
   "compactionCount": 1,
   "projectContext": "Authentication system refactor",
   "overallDirection": "Fixing rate limiting and token validation",
-  "keyPoints": [
-    "Fixed token expiration bug",
-    "Added Redis rate limiting",
-    "Created test suite"
+  "milestones": [
+    { "c": 1, "t": "Fixed token expiration bug" },
+    { "c": 1, "t": "Added Redis rate limiting" },
+    { "c": 1, "t": "Created test suite" }
   ]
 }
 ```
 
-*After Second Compaction:*
+_After Second Compaction:_
+
 ```json
 {
   "compactionCount": 2,
   "projectContext": "Authentication system refactor",
   "overallDirection": "Fixing rate limiting and token validation",
-  "keyPoints": [
-    "Fixed token expiration bug",
-    "Added Redis rate limiting",
-    "Created test suite",
-    "Integrated with frontend auth flow",
-    "Fixed session persistence bug"
+  "milestones": [
+    { "c": 1, "t": "Fixed token expiration bug" },
+    { "c": 1, "t": "Added Redis rate limiting" },
+    { "c": 1, "t": "Created test suite" },
+    { "c": 2, "t": "Integrated with frontend auth flow" },
+    { "c": 2, "t": "Fixed session persistence bug" }
   ],
   "longTermNarrative": "Started with token validation issues. Implemented Redis-based rate limiting. Fixed multiple edge cases in session handling. System now stable with comprehensive tests."
 }
 ```
+
+`milestones` is append-only across compactions (each compaction adds 1-4 entries, bounded to the last 60). The injected `<session-memory>` block renders it under a "Progression (punch list of major events)" heading with `[#n]` tags.
 
 ---
 
@@ -319,26 +344,28 @@ These three tools let Claude consult its perfect-memory advisor:
 ```typescript
 await use_mcp_tool("context-layer", "recall_history", {
   query: "What changes did I make to the authentication system?",
-  lookback: "session"  // or "day", "week", "all"
+  lookback: "session", // or "day", "week", "all"
 });
 ```
 
 **What Happens:**
+
 1. Loads operation logs (up to 800K tokens)
-2. Sends to GPT-4.1 with your question
-3. GPT-4.1 analyzes the entire history and answers
+2. Sends to gpt-5.4-mini with your question
+3. gpt-5.4-mini analyzes the entire history and answers
 
 **Example Response:**
+
 ```
 You made several changes to the authentication system:
 
-1. Fixed token validation bug in auth.ts (5:30 PM) - The middleware wasn't 
+1. Fixed token validation bug in auth.ts (5:30 PM) - The middleware wasn't
    properly checking token expiration
 
-2. Added Redis rate limiting (6:15 PM) - Implemented sliding window rate 
+2. Added Redis rate limiting (6:15 PM) - Implemented sliding window rate
    limiter with 100 requests/minute
 
-3. Created test suite (6:45 PM) - Added comprehensive tests covering all 
+3. Created test suite (6:45 PM) - Added comprehensive tests covering all
    auth flows including edge cases
 
 The changes are complete and all tests are passing.
@@ -351,11 +378,12 @@ The changes are complete and all tests are passing.
 ```typescript
 await use_mcp_tool("context-layer", "file_edit_history", {
   filePath: "src/auth.ts",
-  sessionId: "optional-specific-session"
+  sessionId: "optional-specific-session",
 });
 ```
 
 **Response:**
+
 ```json
 {
   "filePath": "src/auth.ts",
@@ -388,11 +416,12 @@ await use_mcp_tool("context-layer", "file_edit_history", {
 await use_mcp_tool("context-layer", "search_tool_history", {
   toolName: "Bash",
   since: "2026-01-19T00:00:00Z",
-  limit: 10
+  limit: 10,
 });
 ```
 
 **Response:**
+
 ```json
 {
   "matches": [
@@ -428,6 +457,7 @@ Recent changes:
 ```
 
 This prevents:
+
 - Re-introducing bugs
 - Forgetting what was already tried
 - Asking "what did I change?" repeatedly
@@ -442,18 +472,20 @@ If a file has been edited 10+ times across 3+ sessions, you get a warning:
 ```
 
 This indicates:
+
 - The code might have design issues
 - The file is overly complex
 - Consider refactoring or breaking it up
 
-### 3. **Background Enrichment**
+### 3. **Local Edit Logging**
 
-Every file edit gets summarized in the background (no waiting):
-- Uses GPT-4o-mini (fast, cheap)
-- Generates 1-sentence summary
+Every file edit is recorded locally in the rolling log (no waiting):
+
+- No LLM call (`rolling_log.backgroundEnrichment = false`)
+- Captures timestamp, tool, file, and counts
 - Stored for future reference
 
-Cost: ~$0.0001 per edit
+Cost: $0 (no LLM)
 
 ---
 
@@ -467,21 +499,28 @@ All settings in `~/.claude/hooks/unified/config.json`:
 {
   "llm": {
     "recall": {
-      "model": "openai/gpt-4.1",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "maxTokens": 2000
+      "provider": "openai",
+      "model": "gpt-5.4-mini",
+      "baseUrl": "https://api.openai.com/v1",
+      "maxTokens": 25000,
+      "reasoningEffort": "medium"
     },
     "summarize": {
-      "model": "openai/gpt-4o-mini",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "maxTokens": 500
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "baseUrl": "https://api.openai.com/v1",
+      "maxTokens": 8000,
+      "reasoningEffort": "low"
     }
   }
 }
 ```
 
-**API Key Auto-Detection:**
-1. `~/.claude-code-fast-permission-hook/config.json` (from cf-approve)
+These are reasoning models served by the **OpenAI Responses API** (`POST https://api.openai.com/v1/responses`). Model IDs are bare (no `openai/` prefix). The request body uses `input`, `max_output_tokens`, and `reasoning: { effort }`; `temperature` is NOT sent. The configured `maxTokens` maps to `max_output_tokens`, which covers BOTH reasoning tokens AND visible output.
+
+**API Key Auto-Detection** (must be an OpenAI key — calls go to api.openai.com):
+
+1. `~/.claude-code-fast-permission-hook/config.json` (`llm.apiKey`)
 2. `OPENROUTER_API_KEY` environment variable
 3. `OPENAI_API_KEY` environment variable
 
@@ -512,13 +551,13 @@ All settings in `~/.claude/hooks/unified/config.json`:
     "maxEntries": 10000,
     "maxAgeDays": 30,
     "summarizeAfterEdits": 2,
-    "backgroundEnrichment": true
+    "backgroundEnrichment": false
   }
 }
 ```
 
 - `summarizeAfterEdits: 2` - Warn after 2nd edit of same file
-- `backgroundEnrichment: true` - Auto-summarize edits with LLM
+- `backgroundEnrichment: false` - No LLM call on edits; edits are recorded locally only
 
 ### Quality Gates Configuration
 
@@ -543,14 +582,15 @@ Runs at end of each conversation turn (Stop hook).
 
 ## Cost Breakdown
 
-| Operation | Model | Cost per Use | Frequency |
-|-----------|-------|--------------|-----------|
-| Edit summary | GPT-4o-mini | $0.0001 | Every file edit |
-| Session memory | GPT-4o-mini | $0.0002 | Every compaction (~154K tokens) |
-| Recall query | GPT-4.1 | $0.001-0.005 | When you ask |
+| Operation      | Model        | Cost per Use | Frequency                       |
+| -------------- | ------------ | ------------ | ------------------------------- |
+| Edit logging   | none         | $0 (no LLM)  | Every file edit                 |
+| Session memory | gpt-5-mini   | $0.0002      | Every compaction (~154K tokens) |
+| Recall query   | gpt-5.4-mini | $0.001-0.005 | When you ask                    |
 
 **Typical Session:**
-- 50 file edits: $0.005
+
+- 50 file edits: $0 (no LLM)
 - 2 compactions: $0.0004
 - 5 recall queries: $0.015
 
@@ -561,21 +601,27 @@ Runs at end of each conversation turn (Stop hook).
 ## Benefits
 
 ### 1. **Perfect Recall**
-Claude can ask "what did I do 2 hours ago?" and get accurate answers from GPT-4.1.
+
+Claude can ask "what did I do 2 hours ago?" and get accurate answers from gpt-5.4-mini.
 
 ### 2. **Fewer Bugs**
+
 Edit history warnings prevent re-introducing bugs that were already fixed.
 
 ### 3. **Better Quality**
+
 End-of-turn quality gates catch issues before you move on.
 
 ### 4. **Consistent Code**
+
 Auto-formatting ensures all code follows style guidelines.
 
 ### 5. **Architectural Insights**
+
 High churn detection highlights files that need refactoring.
 
 ### 6. **Session Continuity**
+
 Session memory survives compactions, maintaining project context.
 
 ---
@@ -586,20 +632,22 @@ Session memory survives compactions, maintaining project context.
 
 **You:** "Fix the auth bug"
 
-*Claude fixes it*
+_Claude fixes it_
 
 **2 hours later...**
 
 **You:** "The auth bug is back"
 
-*Claude checks:*
+_Claude checks:_
+
 ```typescript
 await use_mcp_tool("context-layer", "file_edit_history", {
-  filePath: "src/auth.ts"
+  filePath: "src/auth.ts",
 });
 ```
 
-*Sees:*
+_Sees:_
+
 ```
 totalEdits: 5
 recentChanges:
@@ -614,7 +662,8 @@ recentChanges:
 
 **Context compacts at 154K tokens**
 
-*On next prompt, Claude sees:*
+_On next prompt, Claude sees:_
+
 ```xml
 <session-memory>
 Compaction #1 | Session: 3h
@@ -636,15 +685,17 @@ Claude still knows what's going on, even though detailed conversation history wa
 
 **You:** "What have I been working on this session?"
 
-*Claude:*
+_Claude:_
+
 ```typescript
 await use_mcp_tool("context-layer", "recall_history", {
   query: "Summarize all work done this session",
-  lookback: "session"
+  lookback: "session",
 });
 ```
 
-*GPT-4.1 responds:*
+_gpt-5.4-mini responds:_
+
 ```
 This session focused on the e-commerce checkout flow:
 

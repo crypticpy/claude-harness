@@ -26,7 +26,8 @@ export function isPoisonedMemory(data) {
     if (!data) return false;
     return data.projectContext === 'Unknown'
         && data.overallDirection === 'In progress'
-        && (!data.keyPoints || data.keyPoints.length === 0);
+        && !data.keyPoints?.length
+        && !data.milestones?.length;
 }
 
 /**
@@ -50,7 +51,7 @@ export async function injectMemory(event) {
 
         const memory = JSON.parse(readFileSync(memoryPath, 'utf-8'));
 
-        if (!memory.projectContext && !memory.overallDirection && !memory.keyPoints?.length) {
+        if (!memory.projectContext && !memory.overallDirection && !memory.keyPoints?.length && !memory.milestones?.length) {
             return null;
         }
         if (isPoisonedMemory(memory)) {
@@ -76,7 +77,15 @@ export async function injectMemory(event) {
         if (memory.longTermNarrative) {
             output += `\nNarrative: ${memory.longTermNarrative}\n`;
         }
-        if (memory.keyPoints?.length > 0) {
+        if (Array.isArray(memory.milestones) && memory.milestones.length > 0) {
+            output += '\nProgression (punch list of major events):\n';
+            memory.milestones.forEach((m) => {
+                const tag = m && typeof m === 'object' && m.c ? `[#${m.c}] ` : '';
+                const text = typeof m === 'string' ? m : (m?.t || '');
+                if (text) output += `  • ${tag}${text}\n`;
+            });
+        } else if (memory.keyPoints?.length > 0) {
+            // Legacy memories written before the punch-list change.
             output += '\nHistory:\n';
             memory.keyPoints.forEach((point, i) => {
                 const text = typeof point === 'string' ? point : point.summary || point.text || JSON.stringify(point);

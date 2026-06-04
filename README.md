@@ -6,8 +6,8 @@ Personal Claude Code configuration with the **Memento Architecture** — a hook 
 
 Claude Code's context window compacts every ~154K tokens, losing detailed memory of what happened. This harness solves that with:
 
-- **Session Memory** — GPT-4o-mini summarizes each compaction, building a narrative that persists across the entire session
-- **Trace Diagnosis** — GPT-4.1 (1M context) analyzes full session transcripts to extract lessons from failures
+- **Session Memory** — gpt-5-mini summarizes each compaction, building a narrative that persists across the entire session
+- **Trace Diagnosis** — gpt-5.4-mini analyzes full session transcripts to extract lessons from failures
 - **Rolling Log** — Every tool operation logged with timestamps, creating a searchable audit trail
 - **Context Injection** — On each prompt, recent lessons and project context are injected into Claude's context
 - **Self-Evolution** — `/evolve` aggregates lessons across sessions and proposes harness improvements
@@ -27,7 +27,7 @@ Claude Code's context window compacts every ~154K tokens, losing detailed memory
 │   └── modules/
 │       ├── session-memory.mjs      # Memory across compactions
 │       ├── session-start.mjs       # Context injection on prompt
-│       ├── trace-diagnosis.mjs     # Failure analysis via GPT-4.1
+│       ├── trace-diagnosis.mjs     # Failure analysis via gpt-5.4-mini
 │       ├── rolling-log.mjs         # Operation audit trail
 │       ├── self-evolution.mjs      # Cross-session lesson synthesis
 │       ├── deep-retrospective.mjs  # Full history analysis
@@ -38,7 +38,7 @@ Claude Code's context window compacts every ~154K tokens, losing detailed memory
 │       ├── edit-history.mjs        # File edit tracking
 │       ├── skill-activation.mjs    # Skill suggestions
 │       ├── api-key.mjs             # Key resolution chain
-│       └── llm-call.mjs            # Shared OpenRouter client
+│       └── llm-call.mjs            # Shared OpenAI Responses API client
 │
 ├── commands/                        # Slash commands
 │   ├── plan.md                     # /plan — parallel exploration planning
@@ -143,12 +143,12 @@ Referenced by hook commands; installed by `scripts/bootstrap-mac.sh` and detecte
 
 ## LLM Configuration
 
-The hook system uses external LLMs (via OpenRouter) for memory and diagnosis — Claude doesn't call itself:
+The hook system uses external LLMs (via the OpenAI Responses API) for memory and diagnosis — Claude doesn't call itself:
 
-| Model       | Use                            | Why                                     |
-| ----------- | ------------------------------ | --------------------------------------- |
-| GPT-4.1     | Trace diagnosis, retrospective | 1M context for full transcript analysis |
-| GPT-4o-mini | Session memory summaries       | Fast and cheap for compaction summaries |
+| Model        | Use                            | Why                                          |
+| ------------ | ------------------------------ | -------------------------------------------- |
+| gpt-5.4-mini | Trace diagnosis, retrospective | Reasoning model for full transcript analysis |
+| gpt-5-mini   | Session memory summaries       | Fast and cheap for compaction summaries      |
 
 Configured in `hooks/unified/config.json`.
 

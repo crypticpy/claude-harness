@@ -5,6 +5,7 @@
 ## The Problem with Traditional Orchestration
 
 **Traditional Approach** (what others do):
+
 ```
         ┌──────────────┐
         │ Orchestrator │  ← Single point of failure
@@ -16,6 +17,7 @@
 ```
 
 **Problems**:
+
 - Orchestrator becomes bottleneck
 - Agents are "dumb workers" waiting for instructions
 - Scaling requires orchestrator complexity
@@ -58,6 +60,7 @@ Each Agent:
 <cite index="22-2,22-3">Git worktrees allow "not just switch between tasks — but truly work on multiple things simultaneously, each with its own dedicated AI assistant"</cite>
 
 **Structure**:
+
 ```
 saas-project/
 ├── main/                    # Main worktree (integration point)
@@ -69,6 +72,7 @@ saas-project/
 ```
 
 **Setup**:
+
 ```bash
 # Initialize main repo
 git clone <repo> saas-project/main
@@ -86,6 +90,7 @@ git worktree add ../agent-testing-1 -b agent/testing-1
 ```
 
 **Benefits**:
+
 - <cite index="24-23,24-24">Each agent operates in "complete isolation. They can make changes, run tests, and even break things temporarily, without affecting the others"</cite>
 - All agents see the same .swarm/ coordination files via shared Git history
 - Changes committed in any worktree are immediately available to all others
@@ -97,11 +102,12 @@ git worktree add ../agent-testing-1 -b agent/testing-1
 **Instead of WebSockets/HTTP**, use Git-tracked JSON files for communication.
 
 **Message Structure**:
+
 ```json
 {
   "id": "msg-uuid",
   "from": "agent-frontend-1",
-  "to": "agent-backend-1",  // or "broadcast" for all
+  "to": "agent-backend-1", // or "broadcast" for all
   "timestamp": "2026-01-19T08:00:00Z",
   "type": "request_api_contract",
   "content": {
@@ -120,13 +126,14 @@ git worktree add ../agent-testing-1 -b agent/testing-1
 **Write to**: `.swarm/messages/{to-agent}/{msg-id}.json`
 
 **Hook Integration** (PreToolUse):
+
 ```javascript
 // Check for new messages before every action
 const messages = checkMessages(myAgentId);
 if (messages.length > 0) {
   injectContext(`
 📬 NEW MESSAGES (${messages.length}):
-${messages.map(m => `- From ${m.from}: ${m.type}`).join('\n')}
+${messages.map((m) => `- From ${m.from}: ${m.type}`).join("\n")}
 
 Use recall_history to see message details.
   `);
@@ -134,6 +141,7 @@ Use recall_history to see message details.
 ```
 
 **Advantages**:
+
 - Survives context compaction (messages in Git)
 - Async by default (no blocking)
 - Full audit trail
@@ -183,6 +191,7 @@ Use recall_history to see message details.
 ```
 
 **Agent Behavior** (autonomous):
+
 1. Pull latest .swarm/board.json
 2. Evaluate ready tasks against my capabilities
 3. Pick highest-priority task I can handle
@@ -192,18 +201,22 @@ Use recall_history to see message details.
 7. Start work
 
 **Hook Integration** (SessionStart):
+
 ```javascript
 // Show task board on session start
 const board = readBoard();
-const myTasks = board.in_progress.filter(t => t.assignee === myAgentId);
-const availableTasks = board.ready.filter(t => canHandle(t, mySkills));
+const myTasks = board.in_progress.filter((t) => t.assignee === myAgentId);
+const availableTasks = board.ready.filter((t) => canHandle(t, mySkills));
 
 injectContext(`
 📋 YOUR ACTIVE TASKS (${myTasks.length}):
-${myTasks.map(t => `- ${t.title} (started ${t.started_at})`).join('\n')}
+${myTasks.map((t) => `- ${t.title} (started ${t.started_at})`).join("\n")}
 
 🎯 AVAILABLE TASKS (${availableTasks.length}):
-${availableTasks.slice(0, 5).map(t => `- ${t.title} [${t.complexity}]`).join('\n')}
+${availableTasks
+  .slice(0, 5)
+  .map((t) => `- ${t.title} [${t.complexity}]`)
+  .join("\n")}
 
 Use mcp_tool("swarm", "claim_task", {id: "..."}) to start new work.
 `);
@@ -237,6 +250,7 @@ Use mcp_tool("swarm", "claim_task", {id: "..."}) to start new work.
 ```
 
 **Hook Integration** (PreToolUse for Write/Edit):
+
 ```javascript
 // Before editing ANY file
 const filePath = event.tool_input.file_path;
@@ -263,6 +277,7 @@ Send a message to coordinate or wait for release.
 Add these to context-layer:
 
 ### 1. `swarm_claim_task`
+
 ```typescript
 {
   taskId: string;
@@ -272,6 +287,7 @@ Add these to context-layer:
 ```
 
 ### 2. `swarm_send_message`
+
 ```typescript
 {
   to: string;  // agent ID or "broadcast"
@@ -282,6 +298,7 @@ Add these to context-layer:
 ```
 
 ### 3. `swarm_read_messages`
+
 ```typescript
 {
   agentId: string;
@@ -291,6 +308,7 @@ Add these to context-layer:
 ```
 
 ### 4. `swarm_complete_task`
+
 ```typescript
 {
   taskId: string;
@@ -301,6 +319,7 @@ Add these to context-layer:
 ```
 
 ### 5. `swarm_query_board`
+
 ```typescript
 {
   status?: "backlog" | "ready" | "in_progress" | "review" | "done";
@@ -310,6 +329,7 @@ Add these to context-layer:
 ```
 
 ### 6. `swarm_lock_files`
+
 ```typescript
 {
   files: string[];
@@ -335,15 +355,15 @@ Every architectural decision is logged:
 ```
 
 **Memento Integration**:
-The rolling log + decisions.jsonl give GPT-4.1 perfect memory of *why* choices were made.
+The rolling log + decisions.jsonl give the recall model (`gpt-5.4-mini`) perfect memory of _why_ choices were made.
 
 ```typescript
 await use_mcp_tool("context-layer", "recall_history", {
   query: "Why did we choose PostgreSQL?",
-  lookback: "all"
+  lookback: "all",
 });
 
-// GPT-4.1 searches decisions.jsonl + rolling logs
+// the recall model searches decisions.jsonl + rolling logs
 // Returns: "agent-backend-1 chose PostgreSQL on 2026-01-19 because..."
 ```
 
@@ -356,6 +376,7 @@ await use_mcp_tool("context-layer", "recall_history", {
 **BUT** - we make it **peer-to-peer**:
 
 **Lightweight Consensus Protocol**:
+
 1. Agent proposes decision → writes to decisions.jsonl
 2. Broadcasts message to all agents
 3. Other agents can reply with agreement/disagreement
@@ -363,6 +384,7 @@ await use_mcp_tool("context-layer", "recall_history", {
 5. If disagreement → human review flagged in task board
 
 **Example**:
+
 ```bash
 # Agent-backend-1 proposes
 echo '{"type":"proposal","content":"Use Redis for sessions"}' | \
@@ -382,6 +404,7 @@ echo '{"type":"agree","proposal_id":"..."}' | \
 **New hooks for swarm coordination**:
 
 ### `swarm-sync` (runs every 5 minutes in background)
+
 ```bash
 # Pull latest coordination state
 git fetch origin
@@ -392,6 +415,7 @@ git merge --ff-only origin/main .swarm/
 ```
 
 ### `swarm-heartbeat` (runs every 30 seconds)
+
 ```bash
 # Update agent status
 echo '{"agent":"agent-frontend-1","status":"working","task":"task-uuid-2","last_seen":"'$(date -Iseconds)'"}' \
@@ -403,6 +427,7 @@ git push origin agent/frontend-1:agent/frontend-1
 ```
 
 ### `swarm-conflict-detect` (PreToolUse)
+
 ```bash
 # Before editing, check if another agent modified same file recently
 git log --since="10 minutes ago" --all -- $FILE_PATH | grep -v $MY_AGENT
@@ -419,6 +444,7 @@ fi
 **Scenario**: Build SaaS with user auth, dashboard, and API
 
 ### 1. **PRD Breakdown** (human does this once)
+
 ```bash
 # Human creates initial board.json
 cat > .swarm/board.json << 'EOF'
@@ -442,13 +468,14 @@ git add .swarm && git commit -m "Initial task breakdown" && git push
 ```
 
 ### 2. **Spawn Agents** (one terminal per agent)
+
 ```bash
 # Terminal 1 - Frontend specialist
 cd saas-project/agent-frontend-1
 claude code
 # > "Start working on SaaS project. Check available tasks."
 
-# Terminal 2 - Backend specialist  
+# Terminal 2 - Backend specialist
 cd saas-project/agent-backend-1
 claude code
 # > "Start working on SaaS project. Check available tasks."
@@ -462,11 +489,12 @@ claude code
 ### 3. **Autonomous Coordination**
 
 **Agent-backend-1**:
+
 ```
 [SessionStart hook runs]
 📋 TASK BOARD:
   Backlog: 6 tasks
-  Available for you: 
+  Available for you:
     - User authentication [backend, security]
     - Database schema [backend, database]
     - REST API endpoints [backend, api]
@@ -484,6 +512,7 @@ I'll start with database schema since auth depends on it.
 ```
 
 **Agent-frontend-1** (simultaneously):
+
 ```
 [SessionStart hook runs]
 📋 TASK BOARD:
@@ -506,6 +535,7 @@ Meanwhile, I'll start on dashboard layout.
 ```
 
 **Agent-backend-1** (receives message):
+
 ```
 [PreToolUse hook checks messages]
 📬 NEW MESSAGE from agent-frontend-1:
@@ -529,6 +559,7 @@ Meanwhile, I'll start on dashboard layout.
 ### 4. **Continuous Integration**
 
 Each agent periodically (every hour or when task completes):
+
 ```bash
 # Rebase on main to stay up-to-date
 git fetch origin main
@@ -561,6 +592,7 @@ fi
 ### 6. **Human Review Points**
 
 The main worktree shows the task board:
+
 ```bash
 cd saas-project/main
 git pull --all
@@ -581,16 +613,19 @@ gh pr review 123 --request-changes --body "Needs tests"
 ## Scaling Strategies
 
 ### Small Project (1-5 agents)
+
 - Simple task board
 - Direct file locking
 - Broadcast messages
 
 ### Medium Project (6-15 agents)
+
 - Introduce "lead" agents per domain (frontend-lead, backend-lead)
 - Domain-specific sub-boards
 - Team-scoped messages
 
 ### Large Project (16+ agents)
+
 - Hierarchical task breakdown
 - Multiple repos with submodules
 - Specialized coordination agents (architect, integrator)
@@ -599,44 +634,49 @@ gh pr review 123 --request-changes --body "Needs tests"
 
 ## Benefits Over Orchestrator Model
 
-| Aspect | Orchestrator | Decentralized Swarm |
-|--------|-------------|---------------------|
-| **Scalability** | Bottlenecks at ~10 agents | Scales to 50+ agents |
-| **Fault Tolerance** | Single point of failure | Each agent autonomous |
-| **Context Compaction** | Orchestrator loses history | Each agent has Memento |
-| **Coordination** | Synchronous, blocking | Asynchronous, non-blocking |
-| **Complexity** | Orchestrator code grows | Emergent from simple rules |
-| **Audit Trail** | Orchestrator logs only | Full Git history |
+| Aspect                 | Orchestrator               | Decentralized Swarm        |
+| ---------------------- | -------------------------- | -------------------------- |
+| **Scalability**        | Bottlenecks at ~10 agents  | Scales to 50+ agents       |
+| **Fault Tolerance**    | Single point of failure    | Each agent autonomous      |
+| **Context Compaction** | Orchestrator loses history | Each agent has Memento     |
+| **Coordination**       | Synchronous, blocking      | Asynchronous, non-blocking |
+| **Complexity**         | Orchestrator code grows    | Emergent from simple rules |
+| **Audit Trail**        | Orchestrator logs only     | Full Git history           |
 
 ---
 
 ## Implementation Roadmap
 
 ### Phase 1: Foundation (Week 1)
+
 - [ ] Create `.swarm/` structure in hooks
 - [ ] Implement file-lock system
 - [ ] Add message passing MCP tools
 - [ ] Create task board JSON schema
 
 ### Phase 2: Coordination (Week 2)
+
 - [ ] Build swarm-sync hook (background sync)
 - [ ] Build swarm-heartbeat hook
 - [ ] Add conflict detection (PreToolUse)
 - [ ] Integrate with Memento for message recall
 
 ### Phase 3: Intelligence (Week 3)
+
 - [ ] Add decision logging
 - [ ] Build consensus protocol
 - [ ] Create task claiming logic
 - [ ] Add skill matching algorithm
 
 ### Phase 4: Testing (Week 4)
+
 - [ ] Test with 2 agents on small project
 - [ ] Scale to 5 agents on medium project
 - [ ] Validate message passing
 - [ ] Verify file locking prevents conflicts
 
 ### Phase 5: Production (Week 5)
+
 - [ ] Build monitoring dashboard
 - [ ] Add human review workflow
 - [ ] Create agent health checks
@@ -647,16 +687,19 @@ gh pr review 123 --request-changes --body "Needs tests"
 ## Cost Analysis
 
 **Traditional Orchestrator**:
+
 - Central LLM calls: $X per coordination decision
 - Scales poorly (O(n²) with agent count)
 
 **Decentralized Swarm**:
+
 - File-based coordination: $0
 - Git operations: $0
 - Only LLM costs: agent work itself
 - Scales linearly (O(n))
 
 **Typical SaaS Project** (20 features, 10 agents, 2 weeks):
+
 - Orchestrator model: ~$500-1000 in coordination overhead
 - Swarm model: ~$50 in Memento recall queries
 
@@ -675,13 +718,14 @@ gh pr review 123 --request-changes --body "Needs tests"
 ## Next Steps
 
 Start small:
+
 1. Add swarm MCP tools to context-layer
 2. Create 2-agent test: frontend + backend
 3. Give them a simple task: "Build a login page"
 4. Observe coordination patterns
 5. Iterate and scale
 
-The key is that coordination *emerges* from simple rules, not complex orchestration logic.
+The key is that coordination _emerges_ from simple rules, not complex orchestration logic.
 
 ---
 

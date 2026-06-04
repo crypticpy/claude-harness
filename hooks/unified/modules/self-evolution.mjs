@@ -77,12 +77,12 @@ function collectSessionMemories(limit = 20) {
                 const data = JSON.parse(readFileSync(join(memoriesDir, file), 'utf-8'));
                 if (isPoisonedMemory(data)) continue;
                 // Require at least one meaningful field
-                if (data.projectContext || data.overallDirection || data.keyPoints?.length) {
+                if (data.projectContext || data.overallDirection || data.keyPoints?.length || data.milestones?.length) {
                     memories.push({
                         session: file.replace('.json', ''),
                         projectContext: data.projectContext || '',
                         direction: data.overallDirection || '',
-                        keyPoints: data.keyPoints || [],
+                        keyPoints: data.keyPoints || (data.milestones || []).map(m => typeof m === 'string' ? m : m?.t).filter(Boolean),
                         compactions: data.compactionCount || 0,
                         timestamp: data.startedAt || data.lastCompactionAt || null,
                     });

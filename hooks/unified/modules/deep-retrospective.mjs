@@ -129,7 +129,7 @@ function extractSessionMemories() {
                 compactions: data.compactionCount || 0,
                 direction: data.overallDirection || '',
                 project: data.projectContext || '',
-                keyPoints: data.keyPoints || [],
+                keyPoints: data.keyPoints || (data.milestones || []).map(m => typeof m === 'string' ? m : m?.t).filter(Boolean),
             };
             sessions.push(session);
 
@@ -365,7 +365,7 @@ function aggregateAllData() {
 
 /**
  * Build a comprehensive prompt from aggregated data.
- * Targets ~50K tokens to fit comfortably in GPT-4.1's 1M context.
+ * Targets ~50K tokens to fit comfortably in the recall model's context.
  */
 // Roughly 150K tokens at 4 chars/token. Keeps the prompt well under any
 // provider context cap even when the user has years of history.

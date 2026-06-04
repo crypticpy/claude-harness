@@ -4,18 +4,20 @@
 
   "llm": {
     "recall": {
-      "provider": "openrouter",
-      "model": "openai/gpt-4.1",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "maxTokens": 2000,
-      "description": "Long-context model for historical recall (1M tokens)"
+      "provider": "openai",
+      "model": "gpt-5.4-mini",
+      "baseUrl": "https://api.openai.com/v1",
+      "maxTokens": 25000,
+      "reasoningEffort": "medium",
+      "description": "On-demand recall model (Responses API): recall_history queries, deep-retrospective, self-evolution. maxTokens covers reasoning + visible output."
     },
     "summarize": {
-      "provider": "openrouter",
-      "model": "openai/gpt-4o-mini",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "maxTokens": 1000,
-      "description": "Fast mini model for edit summaries"
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "baseUrl": "https://api.openai.com/v1",
+      "maxTokens": 8000,
+      "reasoningEffort": "low",
+      "description": "Per-compaction session summary (Responses API): the rolling-history punch list + diagnosis written by precompact-llm. maxTokens covers reasoning + visible output."
     }
   },
 
@@ -23,7 +25,7 @@
     "maxEntries": 10000,
     "maxAgeDays": 30,
     "summarizeAfterEdits": 2,
-    "backgroundEnrichment": true
+    "backgroundEnrichment": false
   },
 
   "formatting": {

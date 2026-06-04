@@ -20,6 +20,7 @@ const MEMORIES_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'memo
 const MAX_TRANSCRIPT_CHARS = 500_000;
 const MIN_TOOL_CALLS = 5;
 const LLM_TIMEOUT_MS = 60_000;
+const MAX_MILESTONES = 60; // append-only punch list; oldest entries drop past this
 
 if (!existsSync(MEMORIES_DIR)) {
     mkdirSync(MEMORIES_DIR, { recursive: true });
@@ -167,12 +168,15 @@ function buildCombinedPrompt(condensed, signals, existingMemory) {
         ? `\nError samples:\n${signals.errorMessages.slice(0, 10).join('\n')}\n`
         : '';
 
+    const recentMilestones = Array.isArray(existingMemory?.milestones)
+        ? existingMemory.milestones.slice(-15).map(m => (typeof m === 'string' ? m : `[#${m.c}] ${m.t}`))
+        : [];
     const priorBlock = existingMemory ? `
 This is compaction #${(existingMemory.compactionCount || 0) + 1}. Prior memory:
 ${JSON.stringify({
     projectContext: existingMemory.projectContext,
     overallDirection: existingMemory.overallDirection,
-    keyPoints: existingMemory.keyPoints,
+    recentMilestones,
     longTermNarrative: existingMemory.longTermNarrative
 }, null, 2)}
 ` : 'This is the first compaction of this session.';
@@ -191,9 +195,9 @@ Respond ONLY with valid JSON in this exact shape:
 {
   "memory": {
     "projectContext": "one-line: what codebase/project",
-    "overallDirection": "1-2 sentences: what the user is trying to accomplish",
-    "keyPoints": ["3-5 brief bullets of major decisions/discoveries; merge with prior keyPoints when applicable, total <= 10"],
-    "longTermNarrative": "2-3 sentence story spanning this and prior compactions (omit on first compaction)"
+    "overallDirection": "1-2 sentences: the current high-level goal / what the user is working toward now",
+    "newMilestones": ["1-4 terse past-tense bullets of MAJOR events, decisions, or goals reached in THIS window ONLY (high-level punch list, NOT per-edit detail). Do NOT repeat anything already in recentMilestones. Use [] if nothing significant happened."],
+    "longTermNarrative": "2-3 sentence story of the session's progression so far (omit on first compaction)"
   },
   "diagnosis": {
     "efficiency": <integer 1-10>,
@@ -246,14 +250,25 @@ function writeMemory(memoryPath, sessionId, memoryFields, existingMemory) {
         return;
     }
 
+    const compactionCount = (existingMemory?.compactionCount || 0) + 1;
+
+    // Append-only punch list: keep prior milestones verbatim, add this window's.
+    // (Existing milestones are {c, t} objects, so the string filter ignores them
+    //  on the preserve path — only fresh `newMilestones` strings get appended.)
+    const priorMilestones = Array.isArray(existingMemory?.milestones) ? existingMemory.milestones : [];
+    const freshMilestones = (memoryFields.newMilestones || [])
+        .filter(m => typeof m === 'string' && m.trim())
+        .map(t => ({ c: compactionCount, t: t.trim() }));
+    const milestones = [...priorMilestones, ...freshMilestones].slice(-MAX_MILESTONES);
+
     const memory = {
         sessionId,
         startedAt: existingMemory?.startedAt || new Date().toISOString(),
         lastCompactionAt: new Date().toISOString(),
-        compactionCount: (existingMemory?.compactionCount || 0) + 1,
+        compactionCount,
         projectContext: memoryFields.projectContext,
         overallDirection: memoryFields.overallDirection,
-        keyPoints: memoryFields.keyPoints || [],
+        milestones,
         longTermNarrative: memoryFields.longTermNarrative,
     };
     writeFileSync(memoryPath, JSON.stringify(memory, null, 2));
@@ -314,7 +329,9 @@ export async function runPreCompact(event, config, apiKey) {
             return;
         }
 
-        const llmConfig = config.llm?.recall;
+        // Per-compaction summary (rolling history punch list) runs on the cheaper
+        // summarize model; recall is reserved for on-demand recall_history queries.
+        const llmConfig = config.llm?.summarize || config.llm?.recall;
         if (!llmConfig) {
             if (hasRealContent(existingMemory)) {
                 writeMemory(memoryPath, session_id, existingMemory, existingMemory);
