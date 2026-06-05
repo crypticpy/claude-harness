@@ -13,6 +13,7 @@
 history.jsonl
 stats-cache.json
 mcp-needs-auth-cache.json
+.last-update-result.json
 sessions/
 session-env/
 shell-snapshots/
