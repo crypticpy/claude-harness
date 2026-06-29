@@ -58,5 +58,45 @@
   "evolution": {
     "minSessionsForAnalysis": 3,
     "description": "Self-evolution loop: lessons.jsonl -> aggregation -> LLM synthesis -> proposals -> user review"
+  },
+
+  "puntax": {
+    "description": "PUNTAX v2 settings. Per-subsystem env overrides: PUNTAX_CONTEXT_ROUTER, PUNTAX_EVENT_LEDGER, PUNTAX_PRECOMPACT_MODE, PUNTAX_CODE_MAP, PUNTAX_LLM_DISTILLATION. The permission layer (cf-approve) is intentionally untouched in v2; there is no permission governor block.",
+    "contextRouter": {
+      "enabled": true,
+      "budgets": {
+        "prompt": 300,
+        "pre_edit": 1200,
+        "resume": 1500,
+        "debug": 2000,
+        "review": 3000,
+        "architecture": 3000
+      }
+    },
+    "eventLedger": {
+      "enabled": false,
+      "path": ".claude/context-layer/events.jsonl",
+      "retentionDays": 90
+    },
+    "precompact": {
+      "mode": "llm",
+      "llmFallback": "failure_or_novelty",
+      "thresholds": {
+        "toolErrors": 3,
+        "retryPatterns": 2,
+        "explorationSpirals": 1,
+        "changedFiles": 6
+      }
+    },
+    "llmDistillation": {
+      "enabled": false,
+      "model": "gpt-5-mini",
+      "maxTokens": 4000
+    },
+    "codeMap": {
+      "enabled": false,
+      "dbPath": ".claude/context-layer/code-map.db",
+      "backendOrder": ["lsp", "tree-sitter", "regex"]
+    }
   }
 }
