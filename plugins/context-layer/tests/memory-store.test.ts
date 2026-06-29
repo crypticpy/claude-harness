@@ -1,0 +1,145 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
+import {
+  memoryId,
+  normalizeMemory,
+  validateMemory,
+  appendMemory,
+  readMemories,
+  memoriesPath,
+  type MemoryInput,
+} from "../src/storage/memory-store";
+import { memoryWrite } from "../src/tools/memory-write";
+
+let dir: string;
+
+const baseInput = (over: Partial<MemoryInput> = {}): MemoryInput => ({
+  projectId: "prj_test",
+  kind: "gotcha",
+  scope: "project",
+  text: "CRLF files break the formatter; preserve newlines on write",
+  severity: "high",
+  confidence: "observed",
+  provenance: { source: "event" },
+  ...over,
+});
+
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "mem-store-"));
+});
+
+afterEach(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+describe("memoryId — content addressing", () => {
+  it("is deterministic for identical content", () => {
+    expect(memoryId("prj_a", "gotcha", "project", "x")).toBe(
+      memoryId("prj_a", "gotcha", "project", "x"),
+    );
+  });
+
+  it("differs when any component differs", () => {
+    const base = memoryId("prj_a", "gotcha", "project", "x");
+    expect(memoryId("prj_a", "gotcha", "project", "y")).not.toBe(base);
+    expect(memoryId("prj_a", "decision", "project", "x")).not.toBe(base);
+    expect(memoryId("prj_b", "gotcha", "project", "x")).not.toBe(base);
+  });
+
+  it("matches the mem_ id pattern", () => {
+    expect(memoryId("prj_a", "gotcha", "project", "x")).toMatch(
+      /^mem_[A-Za-z0-9_-]+$/,
+    );
+  });
+});
+
+describe("normalizeMemory — defaults", () => {
+  it("fills id, empty arrays, active status, and createdAt", () => {
+    const m = normalizeMemory(baseInput());
+    expect(m.id).toMatch(/^mem_/);
+    expect(m.files).toEqual([]);
+    expect(m.symbols).toEqual([]);
+    expect(m.status).toBe("active");
+    expect(typeof m.createdAt).toBe("string");
+  });
+});
+
+describe("validateMemory", () => {
+  it("accepts a well-formed memory", () => {
+    expect(validateMemory(normalizeMemory(baseInput())).valid).toBe(true);
+  });
+
+  it("rejects bad enums, empty text, and bad id", () => {
+    expect(
+      validateMemory({ ...normalizeMemory(baseInput()), kind: "nope" }).valid,
+    ).toBe(false);
+    expect(
+      validateMemory({ ...normalizeMemory(baseInput()), text: "" }).valid,
+    ).toBe(false);
+    expect(
+      validateMemory({ ...normalizeMemory(baseInput()), id: "x" }).valid,
+    ).toBe(false);
+    expect(validateMemory(null).valid).toBe(false);
+  });
+
+  it("rejects a missing provenance source", () => {
+    const m = normalizeMemory(baseInput()) as unknown as Record<
+      string,
+      unknown
+    >;
+    m.provenance = {};
+    expect(validateMemory(m).valid).toBe(false);
+  });
+});
+
+describe("appendMemory — persist + dedup + reject", () => {
+  it("writes a valid memory and reads it back", () => {
+    const res = appendMemory(dir, baseInput());
+    expect(res.written).toBe(true);
+    const all = readMemories(dir);
+    expect(all).toHaveLength(1);
+    expect(all[0].text).toBe(baseInput().text);
+    expect(fs.existsSync(memoriesPath(dir))).toBe(true);
+  });
+
+  it("dedupes exact-duplicate content", () => {
+    appendMemory(dir, baseInput());
+    const second = appendMemory(dir, baseInput());
+    expect(second.written).toBe(false);
+    expect(second.reason).toBe("duplicate");
+    expect(readMemories(dir)).toHaveLength(1);
+  });
+
+  it("rejects invalid input without writing", () => {
+    const res = appendMemory(dir, baseInput({ text: "" }));
+    expect(res.written).toBe(false);
+    expect(res.reason).toBe("invalid");
+    expect(readMemories(dir)).toHaveLength(0);
+  });
+
+  it("skips corrupt lines on read", () => {
+    appendMemory(dir, baseInput());
+    fs.appendFileSync(memoriesPath(dir), "{not json\n\n");
+    expect(readMemories(dir)).toHaveLength(1);
+  });
+});
+
+describe("memoryWrite tool — derives projectId + defaults", () => {
+  it("writes via the tool and defaults severity/confidence/source", () => {
+    const res = memoryWrite({
+      kind: "test_command",
+      scope: "project",
+      text: "Run: npx vitest run from the plugin dir",
+      projectPath: dir,
+    });
+    expect(res.written).toBe(true);
+    const all = readMemories(dir);
+    expect(all[0].confidence).toBe("user_confirmed");
+    expect(all[0].severity).toBe("medium");
+    expect(all[0].provenance.source).toBe("user");
+    expect(all[0].projectId).toMatch(/^prj_/);
+  });
+});

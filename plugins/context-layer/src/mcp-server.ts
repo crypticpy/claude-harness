@@ -21,17 +21,20 @@ import {
   sessionCheckpoint,
   refreshIndex,
   indexStatusTool,
+  memoryWrite,
   brainToolDefinitions,
   whatChangedToolDefinition,
   puntaxContextToolDefinition,
   sessionCheckpointToolDefinition,
   refreshIndexToolDefinition,
   indexStatusToolDefinition,
+  memoryWriteToolDefinition,
   type SemanticLookupInput,
   type ImpactCheckInput,
   type SymbolContextInput,
   type ChunkRefInput,
   type PuntaxContextInput,
+  type MemoryWriteInput,
 } from "./tools";
 import { recordFileAccess } from "./learn";
 import { shutdownLsp } from "./lsp/lsp-service";
@@ -169,6 +172,8 @@ const TOOLS = [
   // Code-map index tools
   refreshIndexToolDefinition,
   indexStatusToolDefinition,
+  // Typed memory write
+  memoryWriteToolDefinition,
   // Brain tools
   ...brainToolDefinitions,
   // What changed tool
@@ -360,6 +365,23 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
 
           case "index_status": {
             result = await indexStatusTool({ projectPath: projectDir });
+            break;
+          }
+
+          case "memory_write": {
+            result = memoryWrite({
+              kind: args.kind as MemoryWriteInput["kind"],
+              scope: args.scope as MemoryWriteInput["scope"],
+              text: args.text as string,
+              severity: args.severity as MemoryWriteInput["severity"],
+              confidence: args.confidence as MemoryWriteInput["confidence"],
+              source: args.source as MemoryWriteInput["source"],
+              files: args.files as string[] | undefined,
+              symbols: args.symbols as string[] | undefined,
+              sourcePath: args.sourcePath as string | undefined,
+              notes: args.notes as string | undefined,
+              projectPath: (args.projectPath as string) ?? projectDir,
+            });
             break;
           }
 

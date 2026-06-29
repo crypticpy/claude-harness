@@ -133,3 +133,12 @@ export {
   type IndexStatusInput,
   type IndexStatusResult,
 } from "./index-status";
+
+export {
+  // Typed memory write
+  memoryWrite,
+  memoryWriteToolDefinition,
+  // Types
+  type MemoryWriteInput,
+  type MemoryWriteResult,
+} from "./memory-write";
