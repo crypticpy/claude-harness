@@ -31,7 +31,7 @@ if (!existsSync(MEMORIES_DIR)) {
  * Combines the previously-separate logic from trace-diagnosis (signals) and
  * session-memory (content extraction) into one pass.
  */
-function parseTranscript(transcript, existingMemory) {
+export function parseTranscript(transcript, existingMemory) {
     const lines = transcript.split('\n').filter(Boolean);
     const signals = {
         totalTurns: 0,

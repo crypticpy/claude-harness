@@ -17,12 +17,15 @@ import {
   mistakeLog,
   sessionSummary,
   whatChanged,
+  puntaxContext,
   brainToolDefinitions,
   whatChangedToolDefinition,
+  puntaxContextToolDefinition,
   type SemanticLookupInput,
   type ImpactCheckInput,
   type SymbolContextInput,
   type ChunkRefInput,
+  type PuntaxContextInput,
 } from "./tools";
 import { recordFileAccess } from "./learn";
 
@@ -152,6 +155,8 @@ const TOOLS = [
       },
     },
   },
+  // PUNTAX context router (primary tool)
+  puntaxContextToolDefinition,
   // Brain tools
   ...brainToolDefinitions,
   // What changed tool
@@ -307,6 +312,20 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
               projectPath: projectDir,
               since: args.since as string | undefined,
             });
+            break;
+          }
+
+          case "puntax_context": {
+            const input: PuntaxContextInput = {
+              task: args.task as string,
+              projectDir,
+              sessionId: args.sessionId as string | undefined,
+              mode: args.mode as PuntaxContextInput["mode"],
+              files: args.files as string[] | undefined,
+              symbols: args.symbols as string[] | undefined,
+              budgetTokens: args.budgetTokens as number | undefined,
+            };
+            result = await puntaxContext(input);
             break;
           }
 

@@ -94,3 +94,14 @@ export {
   type WhatChangedInput,
   type ChangeInfo,
 } from "./what-changed";
+
+export {
+  // PUNTAX context router (primary tool)
+  puntaxContext,
+  puntaxContextToolDefinition,
+  // Types
+  type PuntaxContextInput,
+  type PuntaxContextOutput,
+  type PuntaxMode,
+  type PuntaxSource,
+} from "./puntax-context";

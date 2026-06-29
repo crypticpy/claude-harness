@@ -63,8 +63,8 @@ async function main() {
                 const skillCheck = await modules[1].checkSkills(event, config);
                 if (skillCheck) outputs.push(skillCheck);
 
-                // Session memory injection (after compaction)
-                const memory = await modules[2].injectMemory(event);
+                // Session memory injection (after compaction; PUNTAX-gated)
+                const memory = await modules[2].injectMemory(event, config);
                 if (memory) outputs.push(memory);
 
                 // Edit history warnings (if file being discussed was edited before)
@@ -78,10 +78,20 @@ async function main() {
             }
 
             case 'precompact': {
-                // PreCompact: single LLM call produces both narrative memory + diagnosis,
-                // dispatched to memories/<session>.json and lessons.jsonl respectively.
-                const module = await loadModule('precompact-llm');
-                await module.runPreCompact(event, config, apiKey);
+                // PreCompact: always write a deterministic checkpoint (no LLM, no
+                // API key needed), then optionally run the LLM consolidation.
+                // PUNTAX_PRECOMPACT_MODE gates the LLM path; default 'llm'
+                // preserves v1 behavior (narrative memory + diagnosis).
+                const { readPuntaxConfig } = await loadModule('puntax-config');
+                const puntax = readPuntaxConfig(config, process.env);
+
+                const reducer = await loadModule('precompact-reducer');
+                await reducer.runReducer(event, config);
+
+                if (puntax.precompact.mode === 'llm') {
+                    const module = await loadModule('precompact-llm');
+                    await module.runPreCompact(event, config, apiKey);
+                }
                 break;
             }
 
