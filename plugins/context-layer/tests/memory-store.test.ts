@@ -14,6 +14,13 @@ import {
 } from "../src/storage/memory-store";
 import { memoryWrite } from "../src/tools/memory-write";
 
+// Cross-runtime parity: the hook `.mjs` store must compute identical ids so both
+// runtimes share one memories.jsonl.
+import {
+  memoryId as memoryIdMjs,
+  validateMemory as validateMemoryMjs,
+} from "../../../hooks/unified/modules/memory-store.mjs";
+
 let dir: string;
 
 const baseInput = (over: Partial<MemoryInput> = {}): MemoryInput => ({
@@ -124,6 +131,19 @@ describe("appendMemory — persist + dedup + reject", () => {
     appendMemory(dir, baseInput());
     fs.appendFileSync(memoriesPath(dir), "{not json\n\n");
     expect(readMemories(dir)).toHaveLength(1);
+  });
+});
+
+describe("cross-runtime parity (.ts vs .mjs)", () => {
+  it("memoryId matches across runtimes", () => {
+    expect(memoryIdMjs("prj_a", "gotcha", "project", "shared text")).toBe(
+      memoryId("prj_a", "gotcha", "project", "shared text"),
+    );
+  });
+
+  it("a TS-normalized memory validates under the .mjs validator", () => {
+    const m = normalizeMemory(baseInput());
+    expect(validateMemoryMjs(m).valid).toBe(true);
   });
 });
 

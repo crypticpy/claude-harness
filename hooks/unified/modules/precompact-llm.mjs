@@ -1,14 +1,18 @@
 /**
- * PreCompact LLM Consolidation Module
+ * PreCompact LLM Consolidation Module (LEGACY / demoted in Phase 5)
+ *
+ * v2 no longer runs this on every compaction. It is the full-transcript
+ * narrative summarizer, now gated behind PUNTAX_PRECOMPACT_MODE=llm (default is
+ * 'deterministic'). The Phase 5 successor is distill-precompact.mjs, which runs
+ * only when a threshold trips and consumes the checkpoint, not the raw
+ * transcript. `parseTranscript` is still exported and reused by both the
+ * deterministic reducer and the distiller.
  *
  * Replaces two separate LLM calls (session-memory.saveMemory + trace-diagnosis.diagnoseSession)
  * with a single combined call. Reads the transcript once, asks the LLM for both
  * narrative memory and efficiency diagnosis, then dispatches results to both sinks:
  *   - memory file at hooks/unified/memories/<session_id>.json  (used by session-memory.injectMemory)
  *   - lessons.jsonl in the project's context-layer dir         (used by retrospective + evolve)
- *
- * Why: halves PreCompact LLM cost, eliminates duplicated transcript parsing,
- * and keeps the prompt aware of cross-compaction memory when producing diagnosis.
  */
 
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from 'fs';

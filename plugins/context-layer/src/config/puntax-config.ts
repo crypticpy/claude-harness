@@ -75,7 +75,7 @@ export const DEFAULT_PUNTAX: PuntaxConfig = {
     retentionDays: 90,
   },
   precompact: {
-    mode: "llm",
+    mode: "deterministic",
     llmFallback: "failure_or_novelty",
     thresholds: {
       toolErrors: 3,

@@ -23,7 +23,7 @@ describe("readPuntaxConfig — defaults", () => {
     expect(cfg.contextRouter.budgets.prompt).toBe(300);
     expect(cfg.contextRouter.budgets.architecture).toBe(3000);
     expect(cfg.eventLedger.enabled).toBe(false);
-    expect(cfg.precompact.mode).toBe("llm");
+    expect(cfg.precompact.mode).toBe("deterministic");
     expect(cfg.codeMap.enabled).toBe(false);
     expect(cfg.lsp.enabled).toBe(false);
     expect(cfg.llmDistillation.enabled).toBe(false);
@@ -110,11 +110,11 @@ describe("readPuntaxConfig — env overrides", () => {
     expect(
       readPuntaxConfig({}, { PUNTAX_PRECOMPACT_MODE: "llm" }).precompact.mode,
     ).toBe("llm");
-    // Garbage leaves the default in place.
+    // Garbage leaves the default in place (v2 default: deterministic).
     expect(
       readPuntaxConfig({}, { PUNTAX_PRECOMPACT_MODE: "banana" }).precompact
         .mode,
-    ).toBe("llm");
+    ).toBe("deterministic");
   });
 
   it("ignores unrecognized env values (no silent flip)", () => {

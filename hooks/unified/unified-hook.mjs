@@ -79,18 +79,27 @@ async function main() {
 
             case 'precompact': {
                 // PreCompact: always write a deterministic checkpoint (no LLM, no
-                // API key needed), then optionally run the LLM consolidation.
-                // PUNTAX_PRECOMPACT_MODE gates the LLM path; default 'llm'
-                // preserves v1 behavior (narrative memory + diagnosis).
+                // API key needed). v2 default is no routine LLM call.
                 const { readPuntaxConfig } = await loadModule('puntax-config');
                 const puntax = readPuntaxConfig(config, process.env);
 
                 const reducer = await loadModule('precompact-reducer');
-                await reducer.runReducer(event, config);
+                const checkpoint = await reducer.runReducer(event, config);
 
+                // Legacy full-transcript LLM summary: only when explicitly opted
+                // in via PUNTAX_PRECOMPACT_MODE=llm (v1 narrative memory). Default
+                // is now 'deterministic', so this path is off unless requested.
                 if (puntax.precompact.mode === 'llm') {
                     const module = await loadModule('precompact-llm');
                     await module.runPreCompact(event, config, apiKey);
+                }
+
+                // Threshold-gated typed-memory distillation: only when a session
+                // signal trips a threshold AND PUNTAX_LLM_DISTILLATION is on
+                // (default off). Consumes the checkpoint, not the raw transcript.
+                if (puntax.llmDistillation.enabled) {
+                    const distill = await loadModule('distill-precompact');
+                    await distill.runDistill(event, config, apiKey, { checkpoint });
                 }
                 break;
             }

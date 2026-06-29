@@ -29,7 +29,7 @@ export const DEFAULT_PUNTAX = {
     retentionDays: 90,
   },
   precompact: {
-    mode: 'llm', // 'deterministic' | 'llm'
+    mode: 'deterministic', // 'deterministic' | 'llm'
     llmFallback: 'failure_or_novelty',
     thresholds: {
       toolErrors: 3,
