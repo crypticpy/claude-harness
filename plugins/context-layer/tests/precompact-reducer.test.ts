@@ -6,6 +6,9 @@ import * as path from "path";
 // The deterministic reducer is a hook-side ESM module one level up.
 // vitest.config.ts allows fs access to the repo root for this cross-runtime import.
 import { runReducer } from "../../../hooks/unified/modules/precompact-reducer.mjs";
+import { writeEvent } from "../../../hooks/unified/modules/event-writer.mjs";
+
+const LEDGER_ON = { puntax: { eventLedger: { enabled: true } } };
 
 let projectDir: string;
 let transcriptPath: string;
@@ -110,5 +113,48 @@ describe("precompact-reducer (deterministic, no API key)", () => {
       {},
     );
     expect(checkpoint).toBeNull();
+  });
+});
+
+describe("precompact-reducer (event-ledger mode)", () => {
+  it("reduces ledger events into an events-sourced checkpoint", async () => {
+    writeEvent(
+      { sessionId: "L1", kind: "edit", files: ["src/x.ts"], outcome: "ok" },
+      { projectDir },
+    );
+    writeEvent(
+      { sessionId: "L1", kind: "write", files: ["src/y.ts"], outcome: "ok" },
+      { projectDir },
+    );
+    writeEvent(
+      { sessionId: "L1", kind: "test", summary: "vitest run", outcome: "ok" },
+      { projectDir },
+    );
+    // An event from a different session must be excluded.
+    writeEvent(
+      { sessionId: "other", kind: "edit", files: ["src/z.ts"] },
+      { projectDir },
+    );
+
+    const checkpoint: any = await runReducer(
+      { session_id: "L1", transcript_path: transcriptPath },
+      LEDGER_ON,
+    );
+
+    expect(checkpoint).not.toBeNull();
+    expect(checkpoint.source).toBe("events");
+    expect(checkpoint.changedFiles.sort()).toEqual(["src/x.ts", "src/y.ts"]);
+    expect(checkpoint.changedFiles).not.toContain("src/z.ts");
+    expect(checkpoint.testsRun).toContain("vitest run");
+    expect(typeof checkpoint.checkpointIndex).toBe("number");
+  });
+
+  it("falls back to the transcript stub when the ledger has no events", async () => {
+    const checkpoint: any = await runReducer(
+      { session_id: "L2", transcript_path: transcriptPath },
+      LEDGER_ON,
+    );
+    expect(checkpoint).not.toBeNull();
+    expect(checkpoint.source).toBe("transcript");
   });
 });

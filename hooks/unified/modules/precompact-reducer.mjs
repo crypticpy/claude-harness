@@ -1,41 +1,72 @@
 /**
- * Deterministic PreCompact Reducer (Phase 1 stub)
+ * Deterministic PreCompact Reducer
  *
- * Writes a session checkpoint at PreCompact using ONLY deterministic transcript
- * analysis — no LLM, no API key required. Reuses parseTranscript from
- * precompact-llm.mjs (signals + condensed message stream) and derives a compact
- * resume seed: working files, last actions, recent errors, and signal counts.
+ * Writes a session checkpoint at PreCompact using ONLY deterministic analysis —
+ * no LLM, no API key required.
  *
- * This is the seed of the Phase 2 event ledger + session reducer. It runs on
- * every PreCompact regardless of PUNTAX_PRECOMPACT_MODE; the LLM consolidation
- * path (precompact-llm) is gated separately by the caller.
+ * Two sources, in priority order:
+ *   1. Event ledger (Phase 2): when PUNTAX_EVENT_LEDGER is on and there are
+ *      events since the last checkpoint, fold them into the docs/05 checkpoint
+ *      shape via the pure event-reducer (replayable, deterministic).
+ *   2. Transcript signals (Phase 1 stub): otherwise, derive a lighter checkpoint
+ *      from the raw transcript (working files, last actions, recent errors).
+ *
+ * Runs on every PreCompact regardless of PUNTAX_PRECOMPACT_MODE; the LLM
+ * consolidation path (precompact-llm) is gated separately by the caller.
  */
 
-import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, appendFileSync, existsSync } from 'fs';
+import { dirname } from 'path';
 import { parseTranscript } from './precompact-llm.mjs';
+import { reduceEvents } from './event-reducer.mjs';
+import {
+  readEvents,
+  checkpointsFile,
+  pruneEvents,
+} from './event-writer.mjs';
+import { ensureDir } from './storage-paths.mjs';
+import { readPuntaxConfig } from './puntax-config.mjs';
 
 const MIN_TOOL_CALLS = 5;
 const MAX_WORKING_FILES = 8;
 const MAX_ACTIONS = 6;
 const MAX_ERRORS = 5;
 
-/** Resolve the project context-layer dir, mirroring precompact-llm's lessons path. */
-function resolveCheckpointsPath() {
-  const projectDir = process.env.CLAUDE_PROJECT_DIR;
-  if (projectDir) {
-    const dir = join(projectDir, '.claude', 'context-layer');
-    try {
-      mkdirSync(dir, { recursive: true });
-      return join(dir, 'checkpoints.jsonl');
-    } catch (e) {}
-  }
-  const fallbackDir = join(process.env.HOME, '.claude', 'context-layer');
-  mkdirSync(fallbackDir, { recursive: true });
-  return join(fallbackDir, 'checkpoints.jsonl');
+function appendCheckpoint(projectDir, checkpoint) {
+  const file = checkpointsFile(projectDir);
+  ensureDir(dirname(file));
+  appendFileSync(file, JSON.stringify(checkpoint) + '\n');
 }
 
-/** Pull file-like paths out of the condensed TOOL lines, most-recent-last. */
+/** Last checkpoint for this session (for index continuity + incremental sinceTs). */
+function lastCheckpoint(projectDir, sessionId) {
+  const file = checkpointsFile(projectDir);
+  if (!existsSync(file)) return null;
+  let raw;
+  try {
+    raw = readFileSync(file, 'utf-8');
+  } catch {
+    return null;
+  }
+  let found = null;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const c = JSON.parse(line);
+      if (c && c.type === 'checkpoint' && (!sessionId || c.session_id === sessionId)) {
+        found = c;
+      }
+    } catch {
+      // skip corrupt
+    }
+  }
+  return found;
+}
+
+// =============================================================================
+// Transcript-signal fallback (Phase 1)
+// =============================================================================
+
 function extractWorkingFiles(condensed) {
   const files = [];
   const seen = new Set();
@@ -51,16 +82,15 @@ function extractWorkingFiles(condensed) {
       }
     }
   }
-  // Keep the most recently mentioned files.
   return files.slice(-MAX_WORKING_FILES);
 }
 
 function extractLastActions(condensed) {
-  const actions = condensed
+  return condensed
     .split('\n')
     .filter((l) => l.startsWith('TOOL:'))
-    .map((l) => l.slice('TOOL: '.length).trim());
-  return actions.slice(-MAX_ACTIONS);
+    .map((l) => l.slice('TOOL: '.length).trim())
+    .slice(-MAX_ACTIONS);
 }
 
 function extractRecentErrors(condensed, signals) {
@@ -74,43 +104,78 @@ function extractRecentErrors(condensed, signals) {
     .slice(-MAX_ERRORS);
 }
 
+function transcriptCheckpoint(event) {
+  const { session_id, transcript_path } = event;
+  if (!transcript_path || !existsSync(transcript_path)) return null;
+
+  const transcript = readFileSync(transcript_path, 'utf-8');
+  const { signals, condensed } = parseTranscript(transcript, null);
+  if (signals.totalToolCalls < MIN_TOOL_CALLS) return null;
+
+  return {
+    timestamp: new Date().toISOString(),
+    type: 'checkpoint',
+    session_id,
+    source: 'transcript',
+    signals: {
+      totalTurns: signals.totalTurns,
+      totalToolCalls: signals.totalToolCalls,
+      toolErrors: signals.toolErrors,
+      retryPatterns: signals.retryPatterns,
+      explorationSpirals: signals.explorationSpirals,
+      contextSwitches: signals.contextSwitches,
+      permissionDenials: signals.permissionDenials,
+    },
+    workingFiles: extractWorkingFiles(condensed),
+    lastActions: extractLastActions(condensed),
+    recentErrors: extractRecentErrors(condensed, signals),
+  };
+}
+
+// =============================================================================
+// Entry point
+// =============================================================================
+
 /**
  * Build and append a deterministic checkpoint. Returns the checkpoint object
  * (or null when skipped) so callers/tests can assert on it.
  */
-export async function runReducer(event, _config) {
+export async function runReducer(event, config) {
   try {
-    const { session_id, transcript_path } = event || {};
-    if (!session_id || !transcript_path) return null;
-    if (!existsSync(transcript_path)) return null;
+    const { session_id } = event || {};
+    if (!session_id) return null;
+    const projectDir = process.env.CLAUDE_PROJECT_DIR || null;
+    const puntax = readPuntaxConfig(config || {}, process.env);
 
-    const transcript = readFileSync(transcript_path, 'utf-8');
-    // No prior-memory skip: the checkpoint reflects the full visible window.
-    const { signals, condensed } = parseTranscript(transcript, null);
+    // 1. Event-ledger reduction (preferred when enabled and events exist).
+    if (puntax.eventLedger.enabled) {
+      const prev = lastCheckpoint(projectDir, session_id);
+      const events = readEvents(projectDir, {
+        sessionId: session_id,
+        sinceTs: prev?.timestamp || null,
+      });
+      if (events.length > 0) {
+        const checkpoint = {
+          timestamp: new Date().toISOString(),
+          type: 'checkpoint',
+          session_id,
+          source: 'events',
+          ...reduceEvents(events, prev),
+        };
+        appendCheckpoint(projectDir, checkpoint);
+        pruneEvents(projectDir, puntax.eventLedger.retentionDays);
+        return checkpoint;
+      }
+      // No events since last checkpoint → fall through to transcript stub.
+    }
 
-    // Too short to be worth a checkpoint.
-    if (signals.totalToolCalls < MIN_TOOL_CALLS) return null;
-
-    const checkpoint = {
-      timestamp: new Date().toISOString(),
-      type: 'checkpoint',
-      session_id,
-      signals: {
-        totalTurns: signals.totalTurns,
-        totalToolCalls: signals.totalToolCalls,
-        toolErrors: signals.toolErrors,
-        retryPatterns: signals.retryPatterns,
-        explorationSpirals: signals.explorationSpirals,
-        contextSwitches: signals.contextSwitches,
-        permissionDenials: signals.permissionDenials,
-      },
-      workingFiles: extractWorkingFiles(condensed),
-      lastActions: extractLastActions(condensed),
-      recentErrors: extractRecentErrors(condensed, signals),
-    };
-
-    appendFileSync(resolveCheckpointsPath(), JSON.stringify(checkpoint) + '\n');
-    return checkpoint;
+    // 2. Transcript-signal fallback.
+    const checkpoint = transcriptCheckpoint(event);
+    if (checkpoint) {
+      appendCheckpoint(projectDir, checkpoint);
+      return checkpoint;
+    }
+    return null;
   } catch (err) {
     if (process.env.DEBUG) {
       process.stderr.write('[precompact-reducer] error: ' + err.message + '\n');

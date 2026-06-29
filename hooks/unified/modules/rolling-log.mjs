@@ -8,6 +8,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, readdirSync, unlinkSync, statSync } from 'fs';
 import { join, extname } from 'path';
 import { callLlm } from './llm-call.mjs';
+import { readPuntaxConfig } from './puntax-config.mjs';
+import { mirrorToolEvent } from './event-writer.mjs';
 
 const LOG_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'logs');
 const FILE_EDITS_DB = join(LOG_DIR, 'file-edits.json');
@@ -41,6 +43,15 @@ export async function logOperation(event, config, apiKey) {
 
         // Append to session log
         appendFileSync(sessionLogPath, JSON.stringify(logEntry) + '\n');
+
+        // Mirror into the PUNTAX event ledger when enabled (additive; the
+        // rolling log keeps running in parallel). Also records passive
+        // `permission` events on observed denials. Never blocks on failure.
+        try {
+            if (readPuntaxConfig(config || {}, process.env).eventLedger.enabled) {
+                mirrorToolEvent(event, { projectDir: process.env.CLAUDE_PROJECT_DIR });
+            }
+        } catch (_) {}
 
         // Track file edits specifically
         if (tool_name === 'Edit' || tool_name === 'Write') {

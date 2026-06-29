@@ -105,3 +105,13 @@ export {
   type PuntaxMode,
   type PuntaxSource,
 } from "./puntax-context";
+
+export {
+  // Deterministic session checkpoint
+  sessionCheckpoint,
+  sessionCheckpointToolDefinition,
+  // Types
+  type SessionCheckpointInput,
+  type SessionCheckpointResult,
+  type Checkpoint,
+} from "./session-checkpoint";

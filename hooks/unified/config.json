@@ -74,7 +74,7 @@
       }
     },
     "eventLedger": {
-      "enabled": false,
+      "enabled": true,
       "path": ".claude/context-layer/events.jsonl",
       "retentionDays": 90
     },

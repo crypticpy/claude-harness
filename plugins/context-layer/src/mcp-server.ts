@@ -18,9 +18,11 @@ import {
   sessionSummary,
   whatChanged,
   puntaxContext,
+  sessionCheckpoint,
   brainToolDefinitions,
   whatChangedToolDefinition,
   puntaxContextToolDefinition,
+  sessionCheckpointToolDefinition,
   type SemanticLookupInput,
   type ImpactCheckInput,
   type SymbolContextInput,
@@ -157,6 +159,8 @@ const TOOLS = [
   },
   // PUNTAX context router (primary tool)
   puntaxContextToolDefinition,
+  // Deterministic session checkpoint
+  sessionCheckpointToolDefinition,
   // Brain tools
   ...brainToolDefinitions,
   // What changed tool
@@ -326,6 +330,14 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
               budgetTokens: args.budgetTokens as number | undefined,
             };
             result = await puntaxContext(input);
+            break;
+          }
+
+          case "session_checkpoint": {
+            result = await sessionCheckpoint({
+              projectPath: projectDir,
+              sessionId: args.sessionId as string | undefined,
+            });
             break;
           }
 
