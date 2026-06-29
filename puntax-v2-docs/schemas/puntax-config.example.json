@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "puntax": {
+    "contextRouter": {
+      "enabled": true,
+      "budgets": {
+        "prompt": 300,
+        "pre_edit": 1200,
+        "resume": 1500,
+        "debug": 2000,
+        "review": 3000,
+        "architecture": 3000
+      }
+    },
+    "eventLedger": {
+      "enabled": true,
+      "path": ".claude/context-layer/events.jsonl",
+      "retentionDays": 90
+    },
+    "precompact": {
+      "mode": "deterministic",
+      "llmFallback": "failure_or_novelty",
+      "thresholds": {
+        "toolErrors": 3,
+        "retryPatterns": 2,
+        "explorationSpirals": 1,
+        "changedFiles": 6
+      }
+    },
+    "llmDistillation": {
+      "enabled": false,
+      "model": "gpt-5-mini",
+      "maxTokens": 4000
+    },
+    "codeMap": {
+      "enabled": true,
+      "dbPath": ".claude/context-layer/code-map.db",
+      "backendOrder": [
+        "lsp",
+        "tree-sitter",
+        "regex"
+      ]
+    },
+    "permissionGovernor": {
+      "enabled": false,
+      "cfApproveFallback": true,
+      "candidateOnlyAutoAccrual": true,
+      "neverAutoApproveDestructive": true
+    }
+  }
+}

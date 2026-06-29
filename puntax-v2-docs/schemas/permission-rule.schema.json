@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://puntax.local/schemas/permission-rule.schema.json",
+  "title": "PUNTAX Permission Rule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "scope",
+    "tool",
+    "decision",
+    "match",
+    "constraints",
+    "status",
+    "createdAt",
+    "provenance"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^perm_[A-Za-z0-9_-]+$"
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "global",
+        "project",
+        "repo",
+        "path"
+      ]
+    },
+    "projectId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tool": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "ask",
+        "deny",
+        "escalate"
+      ]
+    },
+    "match": {
+      "type": "object",
+      "properties": {
+        "commandRegex": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toolInputPattern": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "constraints": {
+      "type": "object",
+      "required": [
+        "cwdInsideProject",
+        "networkAllowed",
+        "writeOutsideProjectAllowed"
+      ],
+      "properties": {
+        "cwdInsideProject": {
+          "type": "boolean"
+        },
+        "networkAllowed": {
+          "type": "boolean"
+        },
+        "writeOutsideProjectAllowed": {
+          "type": "boolean"
+        },
+        "maxRuntimeSeconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "candidate",
+        "active",
+        "revoked"
+      ]
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
