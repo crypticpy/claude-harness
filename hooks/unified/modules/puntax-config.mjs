@@ -24,7 +24,7 @@ export const DEFAULT_PUNTAX = {
     },
   },
   eventLedger: {
-    enabled: false,
+    enabled: true,
     path: '.claude/context-layer/events.jsonl',
     retentionDays: 90,
   },
@@ -44,12 +44,12 @@ export const DEFAULT_PUNTAX = {
     maxTokens: 4000,
   },
   codeMap: {
-    enabled: false,
+    enabled: true,
     dbPath: '.claude/context-layer/code-map.db',
     backendOrder: ['lsp', 'tree-sitter', 'regex'],
   },
   lsp: {
-    enabled: false,
+    enabled: true,
   },
 };
 

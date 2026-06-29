@@ -22,10 +22,10 @@ describe("readPuntaxConfig — defaults", () => {
     expect(cfg.contextRouter.enabled).toBe(true);
     expect(cfg.contextRouter.budgets.prompt).toBe(300);
     expect(cfg.contextRouter.budgets.architecture).toBe(3000);
-    expect(cfg.eventLedger.enabled).toBe(false);
+    expect(cfg.eventLedger.enabled).toBe(true);
     expect(cfg.precompact.mode).toBe("deterministic");
-    expect(cfg.codeMap.enabled).toBe(false);
-    expect(cfg.lsp.enabled).toBe(false);
+    expect(cfg.codeMap.enabled).toBe(true);
+    expect(cfg.lsp.enabled).toBe(true);
     expect(cfg.llmDistillation.enabled).toBe(false);
   });
 
@@ -45,7 +45,7 @@ describe("readPuntaxConfig — defaults", () => {
     );
     // The shared default must stay pristine for the next caller.
     expect(DEFAULT_PUNTAX.llmDistillation.enabled).toBe(false);
-    expect(DEFAULT_PUNTAX.eventLedger.enabled).toBe(false);
+    expect(DEFAULT_PUNTAX.eventLedger.enabled).toBe(true);
   });
 });
 
@@ -87,19 +87,19 @@ describe("readPuntaxConfig — env overrides", () => {
     expect(cfg.llmDistillation.enabled).toBe(true);
   });
 
-  it("defaults PUNTAX_LSP to off when unset and respects false", () => {
-    expect(readPuntaxConfig({}, {}).lsp.enabled).toBe(false);
+  it("defaults PUNTAX_LSP to on; env and config block can disable it", () => {
+    expect(readPuntaxConfig({}, {}).lsp.enabled).toBe(true);
     expect(readPuntaxConfig({}, { PUNTAX_LSP: "off" }).lsp.enabled).toBe(false);
     expect(
-      readPuntaxConfig({ puntax: { lsp: { enabled: true } } }, {}).lsp.enabled,
-    ).toBe(true);
+      readPuntaxConfig({ puntax: { lsp: { enabled: false } } }, {}).lsp.enabled,
+    ).toBe(false);
     // Env override wins over config block.
     expect(
       readPuntaxConfig(
-        { puntax: { lsp: { enabled: true } } },
-        { PUNTAX_LSP: "no" },
+        { puntax: { lsp: { enabled: false } } },
+        { PUNTAX_LSP: "yes" },
       ).lsp.enabled,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("honors PUNTAX_PRECOMPACT_MODE only for valid values", () => {

@@ -61,7 +61,7 @@
   },
 
   "puntax": {
-    "description": "PUNTAX v2 settings. Per-subsystem env overrides: PUNTAX_CONTEXT_ROUTER, PUNTAX_EVENT_LEDGER, PUNTAX_PRECOMPACT_MODE, PUNTAX_CODE_MAP, PUNTAX_LLM_DISTILLATION. The permission layer (cf-approve) is intentionally untouched in v2; there is no permission governor block.",
+    "description": "PUNTAX v2 settings. Per-subsystem env overrides: PUNTAX_CONTEXT_ROUTER, PUNTAX_EVENT_LEDGER, PUNTAX_PRECOMPACT_MODE, PUNTAX_CODE_MAP, PUNTAX_LSP, PUNTAX_LLM_DISTILLATION. The permission layer (cf-approve) is intentionally untouched in v2; there is no permission governor block.",
     "contextRouter": {
       "enabled": true,
       "budgets": {
@@ -79,7 +79,7 @@
       "retentionDays": 90
     },
     "precompact": {
-      "mode": "llm",
+      "mode": "deterministic",
       "llmFallback": "failure_or_novelty",
       "thresholds": {
         "toolErrors": 3,
@@ -94,9 +94,12 @@
       "maxTokens": 4000
     },
     "codeMap": {
-      "enabled": false,
+      "enabled": true,
       "dbPath": ".claude/context-layer/code-map.db",
       "backendOrder": ["lsp", "tree-sitter", "regex"]
+    },
+    "lsp": {
+      "enabled": true
     }
   }
 }
