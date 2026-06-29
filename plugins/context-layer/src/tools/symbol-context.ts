@@ -5,22 +5,34 @@
  * Uses the LSP cache for performance and parses files on demand if not cached.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from "fs";
+import * as path from "path";
 import {
   LSPCache,
   getGlobalCache,
   computeFileHash,
   generateSymbolSearchCacheKey,
   DEFAULT_LSP_CONFIG,
-} from '../lsp';
+} from "../lsp";
 import {
   parseFile,
   ParseResult,
   FunctionInfo,
   ClassInfo,
   TypeInfo,
-} from '../indexer';
+} from "../indexer";
+import {
+  codeMapEnabled,
+  projectRoot,
+  openCodeMap,
+  fileFreshnessByMtime,
+} from "../indexer/code-map-service";
+import {
+  CodeMap,
+  projectIdFor,
+  fileIdFor,
+  type SymbolRecord,
+} from "../storage/code-map";
 
 // ============================================================================
 // Types
@@ -32,11 +44,12 @@ export interface SymbolContextInput {
   projectPath: string;
 }
 
-export type SymbolKind = 'function' | 'class' | 'type' | 'interface' | 'variable' | 'unknown';
+export type SymbolKind =
+  "function" | "class" | "type" | "interface" | "variable" | "unknown";
 
 export interface RelatedSymbol {
   name: string;
-  relationship: 'extends' | 'implements' | 'uses' | 'returns';
+  relationship: "extends" | "implements" | "uses" | "returns";
 }
 
 export interface SymbolContextResult {
@@ -60,8 +73,8 @@ interface CachedParseResult {
 // Constants
 // ============================================================================
 
-const SYMBOL_CONTEXT_CACHE_KEY_PREFIX = 'symbol_context';
-const FILE_PARSE_CACHE_KEY_PREFIX = 'file_parse';
+const SYMBOL_CONTEXT_CACHE_KEY_PREFIX = "symbol_context";
+const FILE_PARSE_CACHE_KEY_PREFIX = "file_parse";
 
 // ============================================================================
 // Main Function
@@ -72,7 +85,7 @@ const FILE_PARSE_CACHE_KEY_PREFIX = 'file_parse';
  * and related types.
  */
 export async function getSymbolContext(
-  input: SymbolContextInput
+  input: SymbolContextInput,
 ): Promise<SymbolContextResult | null> {
   const { symbolName, filePath, projectPath } = input;
   const cache = getGlobalCache();
@@ -80,13 +93,24 @@ export async function getSymbolContext(
   // Check cache first
   const cacheKey = generateSymbolSearchCacheKey(
     SYMBOL_CONTEXT_CACHE_KEY_PREFIX,
-    `${symbolName}:${filePath || ''}`,
-    projectPath
+    `${symbolName}:${filePath || ""}`,
+    projectPath,
   );
 
   const cached = cache.get<SymbolContextResult>(cacheKey);
   if (cached) {
     return cached;
+  }
+
+  // Index-first tier (code-map): answer from the symbol table without scanning
+  // the project, when the defining file is fresh. Falls through on any miss.
+  // Tier order per docs/06 will gain LSP/Tree-sitter ahead of this in Phase 3b.
+  if (codeMapEnabled()) {
+    const indexed = symbolContextFromIndex(symbolName, filePath, projectPath);
+    if (indexed) {
+      cache.set(cacheKey, indexed, "index_result", projectPath);
+      return indexed;
+    }
   }
 
   let result: SymbolContextResult | null = null;
@@ -101,7 +125,7 @@ export async function getSymbolContext(
 
   if (result) {
     // Cache the result
-    cache.set(cacheKey, result, 'search_result', projectPath);
+    cache.set(cacheKey, result, "search_result", projectPath);
   }
 
   return result;
@@ -117,7 +141,7 @@ export async function getSymbolContext(
 async function searchInFile(
   symbolName: string,
   filePath: string,
-  cache: LSPCache
+  cache: LSPCache,
 ): Promise<SymbolContextResult | null> {
   const parseResult = await getCachedParseResult(filePath, cache);
   if (!parseResult) {
@@ -132,14 +156,14 @@ async function searchInFile(
  */
 async function getCachedParseResult(
   filePath: string,
-  cache: LSPCache
+  cache: LSPCache,
 ): Promise<ParseResult | null> {
   try {
     if (!fs.existsSync(filePath)) {
       return null;
     }
 
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = fs.readFileSync(filePath, "utf-8");
     const fileHash = computeFileHash(content);
     const cacheKey = `${FILE_PARSE_CACHE_KEY_PREFIX}:${filePath}`;
 
@@ -172,7 +196,7 @@ async function getCachedParseResult(
 async function searchProject(
   symbolName: string,
   projectPath: string,
-  cache: LSPCache
+  cache: LSPCache,
 ): Promise<SymbolContextResult | null> {
   const files = collectSourceFiles(projectPath);
 
@@ -194,7 +218,7 @@ async function searchProject(
  */
 function collectSourceFiles(
   projectPath: string,
-  maxFiles: number = DEFAULT_LSP_CONFIG.maxFilesToSearch
+  maxFiles: number = DEFAULT_LSP_CONFIG.maxFilesToSearch,
 ): string[] {
   const files: string[] = [];
   const excludeDirs = new Set(DEFAULT_LSP_CONFIG.excludeDirs);
@@ -212,7 +236,7 @@ function collectSourceFiles(
         const fullPath = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-          if (!excludeDirs.has(entry.name) && !entry.name.startsWith('.')) {
+          if (!excludeDirs.has(entry.name) && !entry.name.startsWith(".")) {
             walk(fullPath);
           }
         } else if (entry.isFile()) {
@@ -241,29 +265,32 @@ function collectSourceFiles(
 function findSymbolInParseResult(
   symbolName: string,
   parseResult: ParseResult,
-  filePath: string
+  filePath: string,
 ): SymbolContextResult | null {
   // Check functions
-  const func = parseResult.functions.find(f => f.name === symbolName);
+  const func = parseResult.functions.find((f) => f.name === symbolName);
   if (func) {
     return buildFunctionContext(func, filePath, parseResult);
   }
 
   // Check classes
-  const cls = parseResult.classes.find(c => c.name === symbolName);
+  const cls = parseResult.classes.find((c) => c.name === symbolName);
   if (cls) {
     return buildClassContext(cls, filePath, parseResult);
   }
 
   // Check types (interfaces, types, enums)
-  const typeInfo = parseResult.types.find(t => t.name === symbolName);
+  const typeInfo = parseResult.types.find((t) => t.name === symbolName);
   if (typeInfo) {
     return buildTypeContext(typeInfo, filePath, parseResult);
   }
 
   // Check exports for variables/constants
-  const exp = parseResult.exports.find(e => e.name === symbolName);
-  if (exp && (exp.kind === 'const' || exp.kind === 'let' || exp.kind === 'var')) {
+  const exp = parseResult.exports.find((e) => e.name === symbolName);
+  if (
+    exp &&
+    (exp.kind === "const" || exp.kind === "let" || exp.kind === "var")
+  ) {
     return buildVariableContext(exp.name, exp.line, filePath);
   }
 
@@ -276,7 +303,7 @@ function findSymbolInParseResult(
 function buildFunctionContext(
   func: FunctionInfo,
   filePath: string,
-  _parseResult: ParseResult
+  _parseResult: ParseResult,
 ): SymbolContextResult {
   const related: RelatedSymbol[] = [];
 
@@ -284,7 +311,7 @@ function buildFunctionContext(
   if (func.returnType) {
     const returnTypeName = extractTypeName(func.returnType);
     if (returnTypeName && !isPrimitiveType(returnTypeName)) {
-      related.push({ name: returnTypeName, relationship: 'returns' });
+      related.push({ name: returnTypeName, relationship: "returns" });
     }
   }
 
@@ -292,22 +319,22 @@ function buildFunctionContext(
   const paramTypes = extractParameterTypes(func.params);
   for (const paramType of paramTypes) {
     if (!isPrimitiveType(paramType)) {
-      related.push({ name: paramType, relationship: 'uses' });
+      related.push({ name: paramType, relationship: "uses" });
     }
   }
 
   // Build signature
-  const asyncPrefix = func.isAsync ? 'async ' : '';
-  const generatorMark = func.isGenerator ? '*' : '';
-  const params = func.params.join(', ');
-  const returnType = func.returnType ? `: ${func.returnType}` : '';
+  const asyncPrefix = func.isAsync ? "async " : "";
+  const generatorMark = func.isGenerator ? "*" : "";
+  const params = func.params.join(", ");
+  const returnType = func.returnType ? `: ${func.returnType}` : "";
   const signature = `${asyncPrefix}function${generatorMark} ${func.name}(${params})${returnType}`;
 
   return {
     name: func.name,
-    kind: 'function',
+    kind: "function",
     signature,
-    documentation: func.docstring || '',
+    documentation: func.docstring || "",
     location: {
       filePath,
       line: func.line,
@@ -322,42 +349,44 @@ function buildFunctionContext(
 function buildClassContext(
   cls: ClassInfo,
   filePath: string,
-  _parseResult: ParseResult
+  _parseResult: ParseResult,
 ): SymbolContextResult {
   const related: RelatedSymbol[] = [];
 
   // Extract extends relationship
   if (cls.extends) {
-    related.push({ name: cls.extends, relationship: 'extends' });
+    related.push({ name: cls.extends, relationship: "extends" });
   }
 
   // Extract implements relationships
   if (cls.implements) {
     for (const impl of cls.implements) {
-      related.push({ name: impl.trim(), relationship: 'implements' });
+      related.push({ name: impl.trim(), relationship: "implements" });
     }
   }
 
   // Build signature
-  const abstractPrefix = cls.isAbstract ? 'abstract ' : '';
-  const extendsClause = cls.extends ? ` extends ${cls.extends}` : '';
+  const abstractPrefix = cls.isAbstract ? "abstract " : "";
+  const extendsClause = cls.extends ? ` extends ${cls.extends}` : "";
   const implementsClause = cls.implements?.length
-    ? ` implements ${cls.implements.join(', ')}`
-    : '';
-  const methodsList = cls.methods.length > 0
-    ? `\n  // Methods: ${cls.methods.slice(0, 5).join(', ')}${cls.methods.length > 5 ? '...' : ''}`
-    : '';
-  const propertiesList = cls.properties.length > 0
-    ? `\n  // Properties: ${cls.properties.slice(0, 5).join(', ')}${cls.properties.length > 5 ? '...' : ''}`
-    : '';
+    ? ` implements ${cls.implements.join(", ")}`
+    : "";
+  const methodsList =
+    cls.methods.length > 0
+      ? `\n  // Methods: ${cls.methods.slice(0, 5).join(", ")}${cls.methods.length > 5 ? "..." : ""}`
+      : "";
+  const propertiesList =
+    cls.properties.length > 0
+      ? `\n  // Properties: ${cls.properties.slice(0, 5).join(", ")}${cls.properties.length > 5 ? "..." : ""}`
+      : "";
 
   const signature = `${abstractPrefix}class ${cls.name}${extendsClause}${implementsClause} {${methodsList}${propertiesList}\n}`;
 
   return {
     name: cls.name,
-    kind: 'class',
+    kind: "class",
     signature,
-    documentation: '', // Classes typically don't have inline docstrings parsed
+    documentation: "", // Classes typically don't have inline docstrings parsed
     location: {
       filePath,
       line: cls.line,
@@ -372,39 +401,39 @@ function buildClassContext(
 function buildTypeContext(
   typeInfo: TypeInfo,
   filePath: string,
-  _parseResult: ParseResult
+  _parseResult: ParseResult,
 ): SymbolContextResult {
   const related: RelatedSymbol[] = [];
 
   // Extract extends relationships
   if (typeInfo.extends) {
     for (const ext of typeInfo.extends) {
-      related.push({ name: ext.trim(), relationship: 'extends' });
+      related.push({ name: ext.trim(), relationship: "extends" });
     }
   }
 
   // Build signature based on kind
   let signature: string;
-  const kind: SymbolKind = typeInfo.kind === 'interface' ? 'interface' : 'type';
+  const kind: SymbolKind = typeInfo.kind === "interface" ? "interface" : "type";
 
-  if (typeInfo.kind === 'interface') {
+  if (typeInfo.kind === "interface") {
     const extendsClause = typeInfo.extends?.length
-      ? ` extends ${typeInfo.extends.join(', ')}`
-      : '';
+      ? ` extends ${typeInfo.extends.join(", ")}`
+      : "";
     const membersList = typeInfo.members?.length
-      ? `\n  ${typeInfo.members.slice(0, 5).join(';\n  ')}${typeInfo.members.length > 5 ? ';...' : ''}`
-      : '';
+      ? `\n  ${typeInfo.members.slice(0, 5).join(";\n  ")}${typeInfo.members.length > 5 ? ";..." : ""}`
+      : "";
     signature = `interface ${typeInfo.name}${extendsClause} {${membersList}\n}`;
-  } else if (typeInfo.kind === 'enum') {
+  } else if (typeInfo.kind === "enum") {
     const membersList = typeInfo.members?.length
-      ? `\n  ${typeInfo.members.slice(0, 5).join(',\n  ')}${typeInfo.members.length > 5 ? ',...' : ''}`
-      : '';
+      ? `\n  ${typeInfo.members.slice(0, 5).join(",\n  ")}${typeInfo.members.length > 5 ? ",..." : ""}`
+      : "";
     signature = `enum ${typeInfo.name} {${membersList}\n}`;
   } else {
     // type alias
     const extendsClause = typeInfo.extends?.length
-      ? ` = ${typeInfo.extends.join(' & ')}`
-      : ' = { ... }';
+      ? ` = ${typeInfo.extends.join(" & ")}`
+      : " = { ... }";
     signature = `type ${typeInfo.name}${extendsClause}`;
   }
 
@@ -412,7 +441,7 @@ function buildTypeContext(
     name: typeInfo.name,
     kind,
     signature,
-    documentation: '',
+    documentation: "",
     location: {
       filePath,
       line: typeInfo.line,
@@ -427,13 +456,13 @@ function buildTypeContext(
 function buildVariableContext(
   name: string,
   line: number,
-  filePath: string
+  filePath: string,
 ): SymbolContextResult {
   return {
     name,
-    kind: 'variable',
+    kind: "variable",
     signature: `const ${name} = ...`,
-    documentation: '',
+    documentation: "",
     location: {
       filePath,
       line,
@@ -455,7 +484,7 @@ function extractTypeName(typeAnnotation: string): string | null {
   let type = typeAnnotation.trim();
 
   // Handle array types
-  if (type.endsWith('[]')) {
+  if (type.endsWith("[]")) {
     type = type.slice(0, -2);
   }
 
@@ -483,7 +512,7 @@ function extractParameterTypes(params: string[]): string[] {
 
   for (const param of params) {
     // Check if parameter has type annotation
-    const colonIndex = param.indexOf(':');
+    const colonIndex = param.indexOf(":");
     if (colonIndex > -1) {
       const typeAnnotation = param.slice(colonIndex + 1).trim();
       const typeName = extractTypeName(typeAnnotation);
@@ -501,13 +530,44 @@ function extractParameterTypes(params: string[]): string[] {
  */
 function isPrimitiveType(typeName: string): boolean {
   const primitives = new Set([
-    'string', 'number', 'boolean', 'void', 'null', 'undefined',
-    'any', 'unknown', 'never', 'object', 'symbol', 'bigint',
-    'String', 'Number', 'Boolean', 'Object', 'Symbol', 'BigInt',
-    'Array', 'Promise', 'Map', 'Set', 'WeakMap', 'WeakSet',
-    'Date', 'RegExp', 'Error', 'Function',
+    "string",
+    "number",
+    "boolean",
+    "void",
+    "null",
+    "undefined",
+    "any",
+    "unknown",
+    "never",
+    "object",
+    "symbol",
+    "bigint",
+    "String",
+    "Number",
+    "Boolean",
+    "Object",
+    "Symbol",
+    "BigInt",
+    "Array",
+    "Promise",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "Date",
+    "RegExp",
+    "Error",
+    "Function",
     // Python primitives
-    'str', 'int', 'float', 'bool', 'None', 'list', 'dict', 'tuple', 'set',
+    "str",
+    "int",
+    "float",
+    "bool",
+    "None",
+    "list",
+    "dict",
+    "tuple",
+    "set",
   ]);
 
   return primitives.has(typeName);
@@ -518,12 +578,109 @@ function isPrimitiveType(typeName: string): boolean {
  */
 function deduplicateRelated(related: RelatedSymbol[]): RelatedSymbol[] {
   const seen = new Set<string>();
-  return related.filter(r => {
+  return related.filter((r) => {
     const key = `${r.name}:${r.relationship}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+
+// ============================================================================
+// Index-backed symbol context (code-map tier)
+// ============================================================================
+
+/** Map a stored code-map symbol kind to the tool's SymbolKind. */
+function mapSymbolKind(kind: string): SymbolKind {
+  switch (kind) {
+    case "function":
+    case "method":
+      return "function";
+    case "class":
+      return "class";
+    case "interface":
+      return "interface";
+    case "type":
+    case "enum":
+      return "type";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * Resolve a symbol from the code-map index. Prefers top-level decls over
+ * methods. Returns null on any miss or when the defining file is stale, so the
+ * caller falls back to the on-demand parse/scan path.
+ */
+function symbolContextFromIndex(
+  symbolName: string,
+  filePath: string | undefined,
+  projectPath: string,
+): SymbolContextResult | null {
+  try {
+    const root = projectRoot(projectPath);
+    const cm = openCodeMap(root);
+    if (!cm) return null;
+    try {
+      const projectId = projectIdFor(root);
+      let matches = cm.getSymbolsByName(projectId, symbolName);
+      if (filePath) {
+        const rel = path
+          .relative(root, path.resolve(projectPath, filePath))
+          .split(path.sep)
+          .join("/");
+        const fid = fileIdFor(projectId, rel);
+        matches = matches.filter((s) => s.fileId === fid);
+      }
+      if (matches.length === 0) return null;
+
+      // Prefer top-level declarations (no parent) over methods.
+      matches.sort(
+        (a, b) =>
+          (a.parentSymbolId ? 1 : 0) - (b.parentSymbolId ? 1 : 0) ||
+          a.startLine - b.startLine,
+      );
+      const sym = matches[0];
+
+      const file = cm.getFileById(sym.fileId);
+      if (!file) return null;
+
+      // Only answer from the index when the defining file is unchanged.
+      const fresh = fileFreshnessByMtime(cm, projectId, root, file.path);
+      if (fresh.state !== "fresh") return null;
+
+      const related = relatedFromEdges(cm, sym);
+      return {
+        name: sym.name,
+        kind: mapSymbolKind(sym.kind),
+        signature: sym.signature ?? sym.name,
+        documentation: sym.doc ?? "",
+        location: {
+          filePath: path.join(root, file.path),
+          line: sym.startLine,
+        },
+        related,
+      };
+    } finally {
+      cm.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** Derive extends/implements relations from the symbol's outgoing edges. */
+function relatedFromEdges(cm: CodeMap, sym: SymbolRecord): RelatedSymbol[] {
+  const related: RelatedSymbol[] = [];
+  for (const edge of cm.edgesFromSymbol(sym.id)) {
+    if (edge.kind !== "extends" && edge.kind !== "implements") continue;
+    const target = edge.targetSymbolId
+      ? cm.getSymbolById(edge.targetSymbolId)
+      : null;
+    if (target) related.push({ name: target.name, relationship: edge.kind });
+  }
+  return deduplicateRelated(related);
 }
 
 // ============================================================================

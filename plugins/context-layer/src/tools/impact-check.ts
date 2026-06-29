@@ -5,41 +5,54 @@
  * Critical for safe refactoring operations.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import { glob } from 'glob';
-import { LSPResult } from '../lsp';
+import * as fs from "fs";
+import * as path from "path";
+import { glob } from "glob";
+import { LSPResult } from "../lsp";
 import {
   getGlobalCache,
   generateSymbolSearchCacheKey,
   computeFileHash,
-} from '../lsp/cache';
-import { parseFile } from '../indexer/parser';
-import type { ImportInfo, ParseResult } from '../indexer/types';
+} from "../lsp/cache";
+import { parseFile } from "../indexer/parser";
+import type { ImportInfo, ParseResult } from "../indexer/types";
+import {
+  codeMapEnabled,
+  ensureProjectIndexed,
+  openCodeMap,
+} from "../indexer/code-map-service";
+import { projectIdFor } from "../storage/code-map";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface ImpactCheckInput {
-  filePath: string;      // File being modified
-  symbolName?: string;   // Specific symbol (optional)
-  projectPath: string;   // Project root
+  filePath: string; // File being modified
+  symbolName?: string; // Specific symbol (optional)
+  projectPath: string; // Project root
 }
 
 export interface Dependent {
   filePath: string;
   line: number;
-  usage: 'import' | 'call' | 'extends' | 'implements' | 'type-reference' | 'property-access' | 'unknown';
-  context?: string;      // Surrounding code context
-  symbolUsed?: string;   // Which symbol from the file is used
+  usage:
+    | "import"
+    | "call"
+    | "extends"
+    | "implements"
+    | "type-reference"
+    | "property-access"
+    | "unknown";
+  context?: string; // Surrounding code context
+  symbolUsed?: string; // Which symbol from the file is used
 }
 
 export interface ImpactResult {
   symbol: string;
   filePath: string;
   dependents: Dependent[];
-  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskLevel: "low" | "medium" | "high" | "critical";
   suggestions: string[];
   metadata: {
     totalFiles: number;
@@ -66,14 +79,14 @@ const RISK_THRESHOLDS = {
   // Above high is critical
 };
 
-const USAGE_RISK_WEIGHTS: Record<Dependent['usage'], number> = {
-  'extends': 3,        // Breaking changes cascade heavily
-  'implements': 3,     // Interface changes affect all implementers
-  'import': 1,         // Direct dependency
-  'call': 1.5,         // Function call sites
-  'type-reference': 2, // Type changes can cause widespread issues
-  'property-access': 1,
-  'unknown': 1,
+const USAGE_RISK_WEIGHTS: Record<Dependent["usage"], number> = {
+  extends: 3, // Breaking changes cascade heavily
+  implements: 3, // Interface changes affect all implementers
+  import: 1, // Direct dependency
+  call: 1.5, // Function call sites
+  "type-reference": 2, // Type changes can cause widespread issues
+  "property-access": 1,
+  unknown: 1,
 };
 
 // ============================================================================
@@ -84,7 +97,9 @@ const USAGE_RISK_WEIGHTS: Record<Dependent['usage'], number> = {
  * Check the impact of modifying a file or symbol.
  * Returns all dependents and risk assessment.
  */
-export async function checkImpact(input: ImpactCheckInput): Promise<LSPResult<ImpactResult>> {
+export async function checkImpact(
+  input: ImpactCheckInput,
+): Promise<LSPResult<ImpactResult>> {
   const startTime = Date.now();
   const cache = getGlobalCache();
 
@@ -103,14 +118,14 @@ export async function checkImpact(input: ImpactCheckInput): Promise<LSPResult<Im
 
   // Check cache
   const cacheKey = generateSymbolSearchCacheKey(
-    'impact-check',
+    "impact-check",
     symbolName || path.basename(filePath),
-    `${normalizedProjectPath}:${normalizedFilePath}`
+    `${normalizedProjectPath}:${normalizedFilePath}`,
   );
 
   let fileHash: string;
   try {
-    const content = fs.readFileSync(normalizedFilePath, 'utf-8');
+    const content = fs.readFileSync(normalizedFilePath, "utf-8");
     fileHash = computeFileHash(content);
 
     const cached = cache.get<ImpactResult>(cacheKey, fileHash);
@@ -131,16 +146,51 @@ export async function checkImpact(input: ImpactCheckInput): Promise<LSPResult<Im
   }
 
   try {
+    // Index-first (file-level only): code-map import edges fully capture which
+    // files import the target. Symbol-level falls through to the scan below —
+    // call/reference sites need the Tree-sitter/LSP tiers (Phase 3b).
+    if (codeMapEnabled() && !symbolName) {
+      const indexed = impactFromIndex(
+        normalizedProjectPath,
+        normalizedFilePath,
+        startTime,
+      );
+      if (indexed) {
+        cache.set(cacheKey, indexed, fileHash, normalizedFilePath);
+        return {
+          success: true,
+          data: indexed,
+          metadata: {
+            cached: false,
+            duration: indexed.metadata.duration,
+            filesSearched: indexed.metadata.filesSearched,
+          },
+        };
+      }
+    }
+
     // Find all project files
     const projectFiles = await findProjectFiles(normalizedProjectPath);
 
     // Build import map for all files
-    const importMaps = await buildImportMaps(projectFiles, normalizedProjectPath);
+    const importMaps = await buildImportMaps(
+      projectFiles,
+      normalizedProjectPath,
+    );
 
     // Find dependents
     const dependents = symbolName
-      ? await findSymbolDependents(normalizedFilePath, symbolName, importMaps, normalizedProjectPath)
-      : await findFileDependents(normalizedFilePath, importMaps, normalizedProjectPath);
+      ? await findSymbolDependents(
+          normalizedFilePath,
+          symbolName,
+          importMaps,
+          normalizedProjectPath,
+        )
+      : await findFileDependents(
+          normalizedFilePath,
+          importMaps,
+          normalizedProjectPath,
+        );
 
     // Calculate risk level
     const riskLevel = calculateRiskLevel(dependents);
@@ -187,25 +237,19 @@ export async function checkImpact(input: ImpactCheckInput): Promise<LSPResult<Im
 // ============================================================================
 
 async function findProjectFiles(projectPath: string): Promise<string[]> {
-  const patterns = [
-    '**/*.ts',
-    '**/*.tsx',
-    '**/*.js',
-    '**/*.jsx',
-    '**/*.py',
-  ];
+  const patterns = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py"];
 
   const ignorePatterns = [
-    '**/node_modules/**',
-    '**/dist/**',
-    '**/build/**',
-    '**/.git/**',
-    '**/__pycache__/**',
-    '**/venv/**',
-    '**/.venv/**',
-    '**/target/**',
-    '**/.next/**',
-    '**/coverage/**',
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.git/**",
+    "**/__pycache__/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/target/**",
+    "**/.next/**",
+    "**/coverage/**",
   ];
 
   const files: string[] = [];
@@ -228,12 +272,15 @@ async function findProjectFiles(projectPath: string): Promise<string[]> {
 // Import Map Building
 // ============================================================================
 
-async function buildImportMaps(files: string[], _projectPath: string): Promise<FileImportMap[]> {
+async function buildImportMaps(
+  files: string[],
+  _projectPath: string,
+): Promise<FileImportMap[]> {
   const maps: FileImportMap[] = [];
 
   for (const filePath of files) {
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = fs.readFileSync(filePath, "utf-8");
       const parseResult = parseFile(content, filePath);
 
       if (parseResult.imports.length > 0 || parseResult.classes.length > 0) {
@@ -259,10 +306,14 @@ async function buildImportMaps(files: string[], _projectPath: string): Promise<F
 /**
  * Format import context based on file language.
  */
-function formatImportContext(filePath: string, symbolName: string, source: string): string {
+function formatImportContext(
+  filePath: string,
+  symbolName: string,
+  source: string,
+): string {
   const ext = path.extname(filePath).toLowerCase();
 
-  if (ext === '.py') {
+  if (ext === ".py") {
     // Python style: from module import symbol
     return `from ${source} import ${symbolName}`;
   }
@@ -277,7 +328,7 @@ function formatImportContext(filePath: string, symbolName: string, source: strin
 async function findFileDependents(
   targetFile: string,
   importMaps: FileImportMap[],
-  projectPath: string
+  projectPath: string,
 ): Promise<Dependent[]> {
   const dependents: Dependent[] = [];
 
@@ -289,7 +340,7 @@ async function findFileDependents(
         dependents.push({
           filePath: map.filePath,
           line: imp.line,
-          usage: 'import',
+          usage: "import",
           symbolUsed: imp.name,
           context: formatImportContext(map.filePath, imp.name, imp.source),
         });
@@ -307,7 +358,7 @@ async function findSymbolDependents(
   targetFile: string,
   symbolName: string,
   importMaps: FileImportMap[],
-  projectPath: string
+  projectPath: string,
 ): Promise<Dependent[]> {
   const dependents: Dependent[] = [];
 
@@ -315,40 +366,44 @@ async function findSymbolDependents(
     if (map.filePath === targetFile) continue;
 
     // Check if this file imports the target file
-    const targetImports = map.imports.filter(imp =>
-      isImportFromFile(imp.source, targetFile, map.filePath, projectPath)
+    const targetImports = map.imports.filter((imp) =>
+      isImportFromFile(imp.source, targetFile, map.filePath, projectPath),
     );
 
     // Check if the symbol is imported
-    const symbolImport = targetImports.find(imp =>
-      imp.name === symbolName || imp.originalName === symbolName
+    const symbolImport = targetImports.find(
+      (imp) => imp.name === symbolName || imp.originalName === symbolName,
     );
 
     if (symbolImport) {
       dependents.push({
         filePath: map.filePath,
         line: symbolImport.line,
-        usage: 'import',
+        usage: "import",
         symbolUsed: symbolName,
-        context: formatImportContext(map.filePath, symbolName, symbolImport.source),
+        context: formatImportContext(
+          map.filePath,
+          symbolName,
+          symbolImport.source,
+        ),
       });
 
       // Search for additional usages in the file
       const additionalUsages = await findSymbolUsagesInFile(
         map.filePath,
         map.parseResult,
-        symbolName
+        symbolName,
       );
       dependents.push(...additionalUsages);
     }
 
     // Check for namespace imports that might use the symbol
-    const namespaceImports = targetImports.filter(imp => imp.isNamespace);
+    const namespaceImports = targetImports.filter((imp) => imp.isNamespace);
     for (const nsImport of namespaceImports) {
       const usages = await findNamespaceSymbolUsages(
         map.filePath,
         nsImport.name,
-        symbolName
+        symbolName,
       );
       dependents.push(...usages);
     }
@@ -363,7 +418,7 @@ async function findSymbolDependents(
 async function findSymbolUsagesInFile(
   filePath: string,
   parseResult: ParseResult,
-  symbolName: string
+  symbolName: string,
 ): Promise<Dependent[]> {
   const dependents: Dependent[] = [];
 
@@ -373,7 +428,7 @@ async function findSymbolUsagesInFile(
       dependents.push({
         filePath,
         line: cls.line,
-        usage: 'extends',
+        usage: "extends",
         symbolUsed: symbolName,
         context: `class ${cls.name} extends ${symbolName}`,
       });
@@ -383,7 +438,7 @@ async function findSymbolUsagesInFile(
       dependents.push({
         filePath,
         line: cls.line,
-        usage: 'implements',
+        usage: "implements",
         symbolUsed: symbolName,
         context: `class ${cls.name} implements ${symbolName}`,
       });
@@ -396,7 +451,7 @@ async function findSymbolUsagesInFile(
       dependents.push({
         filePath,
         line: type.line,
-        usage: 'type-reference',
+        usage: "type-reference",
         symbolUsed: symbolName,
         context: `${type.kind} ${type.name} extends ${symbolName}`,
       });
@@ -405,7 +460,7 @@ async function findSymbolUsagesInFile(
 
   // Search for function calls and property access in file content
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = fs.readFileSync(filePath, "utf-8");
     const callUsages = findCallUsages(content, symbolName, filePath);
     dependents.push(...callUsages);
   } catch {
@@ -421,21 +476,21 @@ async function findSymbolUsagesInFile(
 async function findNamespaceSymbolUsages(
   filePath: string,
   namespaceName: string,
-  symbolName: string
+  symbolName: string,
 ): Promise<Dependent[]> {
   const dependents: Dependent[] = [];
 
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const lines = content.split('\n');
-    const pattern = new RegExp(`\\b${namespaceName}\\.${symbolName}\\b`, 'g');
+    const content = fs.readFileSync(filePath, "utf-8");
+    const lines = content.split("\n");
+    const pattern = new RegExp(`\\b${namespaceName}\\.${symbolName}\\b`, "g");
 
     for (let i = 0; i < lines.length; i++) {
       if (pattern.test(lines[i])) {
         dependents.push({
           filePath,
           line: i + 1,
-          usage: 'property-access',
+          usage: "property-access",
           symbolUsed: symbolName,
           context: lines[i].trim(),
         });
@@ -452,12 +507,19 @@ async function findNamespaceSymbolUsages(
 /**
  * Find function call usages in file content.
  */
-function findCallUsages(content: string, symbolName: string, filePath: string): Dependent[] {
+function findCallUsages(
+  content: string,
+  symbolName: string,
+  filePath: string,
+): Dependent[] {
   const dependents: Dependent[] = [];
-  const lines = content.split('\n');
+  const lines = content.split("\n");
 
   // Match function calls: symbolName( or symbolName<...>(
-  const callPattern = new RegExp(`\\b${escapeRegex(symbolName)}\\s*(?:<[^>]*>)?\\s*\\(`, 'g');
+  const callPattern = new RegExp(
+    `\\b${escapeRegex(symbolName)}\\s*(?:<[^>]*>)?\\s*\\(`,
+    "g",
+  );
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -468,7 +530,7 @@ function findCallUsages(content: string, symbolName: string, filePath: string): 
       dependents.push({
         filePath,
         line: i + 1,
-        usage: 'call',
+        usage: "call",
         symbolUsed: symbolName,
         context: line.trim(),
       });
@@ -490,15 +552,27 @@ function isImportFromFile(
   importSource: string,
   targetFile: string,
   importingFile: string,
-  projectPath: string
+  projectPath: string,
 ): boolean {
   // Handle relative imports
-  if (importSource.startsWith('.')) {
+  if (importSource.startsWith(".")) {
     const importingDir = path.dirname(importingFile);
     const resolvedImport = path.resolve(importingDir, importSource);
 
     // Try with different extensions
-    const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.py', '/index.ts', '/index.tsx', '/index.js', '/index.jsx', '/__init__.py'];
+    const extensions = [
+      "",
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".py",
+      "/index.ts",
+      "/index.tsx",
+      "/index.js",
+      "/index.jsx",
+      "/__init__.py",
+    ];
 
     for (const ext of extensions) {
       if (resolvedImport + ext === targetFile) {
@@ -509,7 +583,11 @@ function isImportFromFile(
     // Check if importing directory with index file
     const targetDir = path.dirname(targetFile);
     const targetBasename = path.basename(targetFile);
-    if ((targetBasename.startsWith('index.') || targetBasename === '__init__.py') && resolvedImport === targetDir) {
+    if (
+      (targetBasename.startsWith("index.") ||
+        targetBasename === "__init__.py") &&
+      resolvedImport === targetDir
+    ) {
       return true;
     }
 
@@ -517,7 +595,7 @@ function isImportFromFile(
   }
 
   // Skip obvious third-party packages (contain hyphen or @scope)
-  if (importSource.includes('-') || importSource.startsWith('@')) {
+  if (importSource.includes("-") || importSource.startsWith("@")) {
     return false;
   }
 
@@ -525,24 +603,26 @@ function isImportFromFile(
   const targetRelative = path.relative(projectPath, targetFile);
   const targetExt = path.extname(targetFile);
 
-  if (targetExt === '.py') {
+  if (targetExt === ".py") {
     // Convert file path to Python module path: auto-claude/client.py -> auto-claude.client
     const targetModule = targetRelative
-      .replace(/\.py$/, '')
-      .replace(/\/__init__$/, '')
-      .replace(/\//g, '.');
+      .replace(/\.py$/, "")
+      .replace(/\/__init__$/, "")
+      .replace(/\//g, ".");
 
     // Check exact match or if import is a parent module
-    if (importSource === targetModule ||
-        importSource.endsWith('.' + path.basename(targetFile, '.py')) ||
-        targetModule.endsWith('.' + importSource) ||
-        targetModule === importSource.replace(/\./g, '/').replace(/^/, '') + '.py') {
+    if (
+      importSource === targetModule ||
+      importSource.endsWith("." + path.basename(targetFile, ".py")) ||
+      targetModule.endsWith("." + importSource) ||
+      targetModule === importSource.replace(/\./g, "/").replace(/^/, "") + ".py"
+    ) {
       return true;
     }
 
     // Handle "from X import Y" where X is a package containing the target
-    const targetParts = targetModule.split('.');
-    const importParts = importSource.split('.');
+    const targetParts = targetModule.split(".");
+    const importParts = importSource.split(".");
 
     // Check if import path matches target path prefix
     if (importParts.length <= targetParts.length) {
@@ -557,14 +637,18 @@ function isImportFromFile(
   const targetBaseName = path.basename(targetFile, path.extname(targetFile));
 
   // Must be a path-like import (contains /) to avoid matching packages
-  if (!importSource.includes('/')) {
+  if (!importSource.includes("/")) {
     return false;
   }
 
   // Check if import path ends with target file path segment
-  const targetPathSegment = '/' + targetBaseName;
-  if (importSource.endsWith(targetPathSegment) ||
-      importSource.endsWith(targetRelative.replace(/\\/g, '/').replace(/\.[^.]+$/, ''))) {
+  const targetPathSegment = "/" + targetBaseName;
+  if (
+    importSource.endsWith(targetPathSegment) ||
+    importSource.endsWith(
+      targetRelative.replace(/\\/g, "/").replace(/\.[^.]+$/, ""),
+    )
+  ) {
     return true;
   }
 
@@ -572,20 +656,26 @@ function isImportFromFile(
 }
 
 function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function validateInput(input: ImpactCheckInput): { valid: boolean; error?: string } {
+function validateInput(input: ImpactCheckInput): {
+  valid: boolean;
+  error?: string;
+} {
   if (!input.filePath) {
-    return { valid: false, error: 'filePath is required' };
+    return { valid: false, error: "filePath is required" };
   }
 
   if (!input.projectPath) {
-    return { valid: false, error: 'projectPath is required' };
+    return { valid: false, error: "projectPath is required" };
   }
 
   if (!fs.existsSync(input.projectPath)) {
-    return { valid: false, error: `Project path does not exist: ${input.projectPath}` };
+    return {
+      valid: false,
+      error: `Project path does not exist: ${input.projectPath}`,
+    };
   }
 
   if (!fs.existsSync(input.filePath)) {
@@ -599,9 +689,11 @@ function validateInput(input: ImpactCheckInput): { valid: boolean; error?: strin
 // Risk Assessment
 // ============================================================================
 
-function calculateRiskLevel(dependents: Dependent[]): ImpactResult['riskLevel'] {
+function calculateRiskLevel(
+  dependents: Dependent[],
+): ImpactResult["riskLevel"] {
   if (dependents.length === 0) {
-    return 'low';
+    return "low";
   }
 
   // Calculate weighted score
@@ -611,29 +703,29 @@ function calculateRiskLevel(dependents: Dependent[]): ImpactResult['riskLevel'] 
   }
 
   // Check for high-risk usage patterns
-  const hasExtends = dependents.some(d => d.usage === 'extends');
-  const hasImplements = dependents.some(d => d.usage === 'implements');
+  const hasExtends = dependents.some((d) => d.usage === "extends");
+  const hasImplements = dependents.some((d) => d.usage === "implements");
 
   if (hasExtends || hasImplements) {
     weightedScore *= 1.5;
   }
 
   // Count unique files
-  const uniqueFiles = new Set(dependents.map(d => d.filePath)).size;
+  const uniqueFiles = new Set(dependents.map((d) => d.filePath)).size;
 
   if (weightedScore > RISK_THRESHOLDS.high || uniqueFiles > 20) {
-    return 'critical';
+    return "critical";
   }
 
   if (weightedScore > RISK_THRESHOLDS.medium || uniqueFiles > 10) {
-    return 'high';
+    return "high";
   }
 
   if (weightedScore > RISK_THRESHOLDS.low || uniqueFiles > 3) {
-    return 'medium';
+    return "medium";
   }
 
-  return 'low';
+  return "low";
 }
 
 // ============================================================================
@@ -643,58 +735,141 @@ function calculateRiskLevel(dependents: Dependent[]): ImpactResult['riskLevel'] 
 function generateSuggestions(
   dependents: Dependent[],
   symbolName: string | undefined,
-  riskLevel: ImpactResult['riskLevel']
+  riskLevel: ImpactResult["riskLevel"],
 ): string[] {
   const suggestions: string[] = [];
-  const uniqueFiles = new Set(dependents.map(d => d.filePath));
+  const uniqueFiles = new Set(dependents.map((d) => d.filePath));
 
   // File count suggestions
   if (uniqueFiles.size > 0) {
-    suggestions.push(`Update ${uniqueFiles.size} file${uniqueFiles.size > 1 ? 's' : ''} that depend on this ${symbolName ? 'symbol' : 'file'}`);
+    suggestions.push(
+      `Update ${uniqueFiles.size} file${uniqueFiles.size > 1 ? "s" : ""} that depend on this ${symbolName ? "symbol" : "file"}`,
+    );
   }
 
   // Usage-specific suggestions
-  const usageCounts: Partial<Record<Dependent['usage'], number>> = {};
+  const usageCounts: Partial<Record<Dependent["usage"], number>> = {};
   for (const dep of dependents) {
     usageCounts[dep.usage] = (usageCounts[dep.usage] || 0) + 1;
   }
 
   if (usageCounts.extends) {
-    suggestions.push(`${usageCounts.extends} class${usageCounts.extends > 1 ? 'es' : ''} extend this - changes will cascade`);
+    suggestions.push(
+      `${usageCounts.extends} class${usageCounts.extends > 1 ? "es" : ""} extend this - changes will cascade`,
+    );
   }
 
   if (usageCounts.implements) {
-    suggestions.push(`${usageCounts.implements} class${usageCounts.implements > 1 ? 'es' : ''} implement this interface`);
+    suggestions.push(
+      `${usageCounts.implements} class${usageCounts.implements > 1 ? "es" : ""} implement this interface`,
+    );
   }
 
   if (usageCounts.call && usageCounts.call > 5) {
-    suggestions.push(`${usageCounts.call} call sites - consider backward-compatible changes`);
+    suggestions.push(
+      `${usageCounts.call} call sites - consider backward-compatible changes`,
+    );
   }
 
-  if (usageCounts['type-reference']) {
-    suggestions.push(`${usageCounts['type-reference']} type reference${usageCounts['type-reference'] > 1 ? 's' : ''} - type changes may cause compilation errors`);
+  if (usageCounts["type-reference"]) {
+    suggestions.push(
+      `${usageCounts["type-reference"]} type reference${usageCounts["type-reference"] > 1 ? "s" : ""} - type changes may cause compilation errors`,
+    );
   }
 
   // Risk-specific suggestions
-  if (riskLevel === 'critical') {
-    suggestions.push('CRITICAL: Consider creating a migration plan before making changes');
-    suggestions.push('Consider deprecating instead of removing');
-  } else if (riskLevel === 'high') {
-    suggestions.push('Run full test suite after changes');
-    suggestions.push('Consider gradual rollout');
-  } else if (riskLevel === 'medium') {
-    suggestions.push('Review affected files after changes');
+  if (riskLevel === "critical") {
+    suggestions.push(
+      "CRITICAL: Consider creating a migration plan before making changes",
+    );
+    suggestions.push("Consider deprecating instead of removing");
+  } else if (riskLevel === "high") {
+    suggestions.push("Run full test suite after changes");
+    suggestions.push("Consider gradual rollout");
+  } else if (riskLevel === "medium") {
+    suggestions.push("Review affected files after changes");
   }
 
   // Test file suggestions
-  const testFiles = Array.from(uniqueFiles).filter(f =>
-    f.includes('.test.') || f.includes('.spec.') || f.includes('__tests__')
+  const testFiles = Array.from(uniqueFiles).filter(
+    (f) =>
+      f.includes(".test.") || f.includes(".spec.") || f.includes("__tests__"),
   );
   if (testFiles.length > 0) {
-    suggestions.push(`Update ${testFiles.length} test file${testFiles.length > 1 ? 's' : ''}`);
+    suggestions.push(
+      `Update ${testFiles.length} test file${testFiles.length > 1 ? "s" : ""}`,
+    );
   }
 
   return suggestions;
+}
+
+// ============================================================================
+// Index-backed impact (file-level)
+// ============================================================================
+
+/**
+ * Answer a file-level impact check from code-map import edges. Returns null on
+ * any miss (file not indexed, db unavailable, file outside project) so the
+ * caller falls back to the scan. Bootstraps a full index on first use.
+ */
+function impactFromIndex(
+  projectRootAbs: string,
+  targetFileAbs: string,
+  startTime: number,
+): ImpactResult | null {
+  try {
+    const relPath = path
+      .relative(projectRootAbs, targetFileAbs)
+      .split(path.sep)
+      .join("/");
+    if (!relPath || relPath.startsWith("..")) return null;
+
+    ensureProjectIndexed(projectRootAbs);
+    const cm = openCodeMap(projectRootAbs);
+    if (!cm) return null;
+    try {
+      const projectId = projectIdFor(projectRootAbs);
+      const targetFile = cm.getFile(projectId, relPath);
+      if (!targetFile) return null; // not indexed (e.g. brand-new file)
+
+      const pathById = new Map(
+        cm.listFiles(projectId).map((f) => [f.id, f.path] as const),
+      );
+      const dependents: Dependent[] = [];
+      for (const edge of cm.edgesTargetingFile(projectId, targetFile.id)) {
+        if (edge.kind !== "imports" || !edge.sourceFileId) continue;
+        const src = pathById.get(edge.sourceFileId);
+        if (!src) continue;
+        dependents.push({
+          filePath: path.join(projectRootAbs, src),
+          line: edge.line ?? 0,
+          usage: "import",
+          context: `imports ${relPath}`,
+        });
+      }
+
+      const riskLevel = calculateRiskLevel(dependents);
+      const suggestions = generateSuggestions(dependents, undefined, riskLevel);
+      return {
+        symbol: path.basename(targetFileAbs),
+        filePath: targetFileAbs,
+        dependents,
+        riskLevel,
+        suggestions,
+        metadata: {
+          totalFiles: pathById.size,
+          filesSearched: pathById.size,
+          duration: Date.now() - startTime,
+          cached: false,
+        },
+      };
+    } finally {
+      cm.close();
+    }
+  } catch {
+    return null;
+  }
 }
 
 // Types are already exported at their definition above

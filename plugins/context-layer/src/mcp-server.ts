@@ -19,10 +19,14 @@ import {
   whatChanged,
   puntaxContext,
   sessionCheckpoint,
+  refreshIndex,
+  indexStatusTool,
   brainToolDefinitions,
   whatChangedToolDefinition,
   puntaxContextToolDefinition,
   sessionCheckpointToolDefinition,
+  refreshIndexToolDefinition,
+  indexStatusToolDefinition,
   type SemanticLookupInput,
   type ImpactCheckInput,
   type SymbolContextInput,
@@ -161,6 +165,9 @@ const TOOLS = [
   puntaxContextToolDefinition,
   // Deterministic session checkpoint
   sessionCheckpointToolDefinition,
+  // Code-map index tools
+  refreshIndexToolDefinition,
+  indexStatusToolDefinition,
   // Brain tools
   ...brainToolDefinitions,
   // What changed tool
@@ -338,6 +345,20 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
               projectPath: projectDir,
               sessionId: args.sessionId as string | undefined,
             });
+            break;
+          }
+
+          case "refresh_index": {
+            result = await refreshIndex({
+              projectPath: projectDir,
+              changedFiles: args.changedFiles as string[] | undefined,
+              force: args.force as boolean | undefined,
+            });
+            break;
+          }
+
+          case "index_status": {
+            result = await indexStatusTool({ projectPath: projectDir });
             break;
           }
 

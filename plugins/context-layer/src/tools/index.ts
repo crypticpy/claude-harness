@@ -115,3 +115,21 @@ export {
   type SessionCheckpointResult,
   type Checkpoint,
 } from "./session-checkpoint";
+
+export {
+  // Code-map incremental refresh
+  refreshIndex,
+  refreshIndexToolDefinition,
+  // Types
+  type RefreshIndexInput,
+  type RefreshIndexResult,
+} from "./refresh-index";
+
+export {
+  // Code-map status
+  indexStatusTool,
+  indexStatusToolDefinition,
+  // Types
+  type IndexStatusInput,
+  type IndexStatusResult,
+} from "./index-status";

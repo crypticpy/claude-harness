@@ -5,39 +5,43 @@
  * saving context window space by providing structured metadata about files.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
+import * as fs from "fs";
+import * as path from "path";
+import * as crypto from "crypto";
 import {
   createStorage,
   generateFileIndexId,
   type ContextStorage,
   type FileIndexEntry,
-} from '../storage';
+} from "../storage";
+import { parseFile, generateSummary, formatSummaryAsText } from "../indexer";
 import {
-  parseFile,
-  generateSummary,
-  formatSummaryAsText,
-} from '../indexer';
+  codeMapEnabled,
+  projectRoot,
+  openCodeMap,
+  refreshFile,
+  fileFreshnessByMtime,
+} from "../indexer/code-map-service";
+import { projectIdFor } from "../storage/code-map";
 
 // =============================================================================
 // Types
 // =============================================================================
 
 export interface SemanticLookupInput {
-  filePath: string;      // File to look up
-  projectPath: string;   // Project root for index lookup
+  filePath: string; // File to look up
+  projectPath: string; // Project root for index lookup
 }
 
 export interface SemanticLookupResult {
   filePath: string;
-  summary: string;           // AI-generated description of file purpose
-  exports: string[];         // List of exported symbols
-  imports: string[];         // Dependencies
+  summary: string; // AI-generated description of file purpose
+  exports: string[]; // List of exported symbols
+  imports: string[]; // Dependencies
   lineCount: number;
-  complexity: 'low' | 'medium' | 'high';
-  lastIndexed: number;       // Timestamp
-  needsFullRead: boolean;    // True if file changed since last index
+  complexity: "low" | "medium" | "high";
+  lastIndexed: number; // Timestamp
+  needsFullRead: boolean; // True if file changed since last index
 }
 
 export interface SemanticLookupOptions {
@@ -51,8 +55,15 @@ export interface SemanticLookupOptions {
 // =============================================================================
 
 const SUPPORTED_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.py', '.pyw', '.pyi',
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".pyw",
+  ".pyi",
 ]);
 
 const DEFAULT_MAX_FILE_SIZE = 1024 * 1024; // 1MB
@@ -65,7 +76,7 @@ const DEFAULT_MAX_FILE_SIZE = 1024 * 1024; // 1MB
  * Compute a content hash for the file to detect changes.
  */
 function computeContentHash(content: string): string {
-  return crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
 /**
@@ -73,7 +84,11 @@ function computeContentHash(content: string): string {
  */
 function generateProjectId(projectPath: string): string {
   const normalized = path.resolve(projectPath);
-  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  return crypto
+    .createHash("sha256")
+    .update(normalized)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 /**
@@ -82,17 +97,17 @@ function generateProjectId(projectPath: string): string {
 function getFileType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
   const typeMap: Record<string, string> = {
-    '.ts': 'typescript',
-    '.tsx': 'typescript-react',
-    '.js': 'javascript',
-    '.jsx': 'javascript-react',
-    '.mjs': 'javascript-module',
-    '.cjs': 'javascript-commonjs',
-    '.py': 'python',
-    '.pyw': 'python',
-    '.pyi': 'python-stub',
+    ".ts": "typescript",
+    ".tsx": "typescript-react",
+    ".js": "javascript",
+    ".jsx": "javascript-react",
+    ".mjs": "javascript-module",
+    ".cjs": "javascript-commonjs",
+    ".py": "python",
+    ".pyw": "python",
+    ".pyi": "python-stub",
   };
-  return typeMap[ext] || 'unknown';
+  return typeMap[ext] || "unknown";
 }
 
 /**
@@ -108,24 +123,27 @@ function isSupportedFile(filePath: string): boolean {
  */
 function readFileSafe(
   filePath: string,
-  maxSize: number = DEFAULT_MAX_FILE_SIZE
+  maxSize: number = DEFAULT_MAX_FILE_SIZE,
 ): { content: string; error?: string } {
   try {
     const stats = fs.statSync(filePath);
 
     if (!stats.isFile()) {
-      return { content: '', error: `Not a file: ${filePath}` };
+      return { content: "", error: `Not a file: ${filePath}` };
     }
 
     if (stats.size > maxSize) {
-      return { content: '', error: `File exceeds max size of ${maxSize} bytes` };
+      return {
+        content: "",
+        error: `File exceeds max size of ${maxSize} bytes`,
+      };
     }
 
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = fs.readFileSync(filePath, "utf-8");
     return { content };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { content: '', error: `Failed to read file: ${message}` };
+    return { content: "", error: `Failed to read file: ${message}` };
   }
 }
 
@@ -145,7 +163,7 @@ function readFileSafe(
  */
 export async function semanticLookup(
   input: SemanticLookupInput,
-  options: SemanticLookupOptions = {}
+  options: SemanticLookupOptions = {},
 ): Promise<SemanticLookupResult> {
   const {
     storage: providedStorage,
@@ -162,7 +180,7 @@ export async function semanticLookup(
   if (!fs.existsSync(absoluteFilePath)) {
     throw new SemanticLookupError(
       `File not found: ${absoluteFilePath}`,
-      'FILE_NOT_FOUND'
+      "FILE_NOT_FOUND",
     );
   }
 
@@ -170,7 +188,7 @@ export async function semanticLookup(
   if (!isSupportedFile(absoluteFilePath)) {
     throw new SemanticLookupError(
       `Unsupported file type: ${path.extname(absoluteFilePath)}`,
-      'UNSUPPORTED_FILE_TYPE'
+      "UNSUPPORTED_FILE_TYPE",
     );
   }
 
@@ -179,10 +197,26 @@ export async function semanticLookup(
   const shouldCloseStorage = !providedStorage;
 
   try {
+    // Index-first fast path: if the code-map says the file is unchanged (mtime)
+    // and the cached summary matches that content version, answer WITHOUT
+    // reading the file at all.
+    if (codeMapEnabled() && !forceReindex) {
+      const fast = await semanticLookupFromIndex(
+        input.projectPath,
+        relativePath,
+        projectId,
+        storage,
+      );
+      if (fast) return fast;
+    }
+
     // Read file content
-    const { content, error: readError } = readFileSafe(absoluteFilePath, maxFileSize);
+    const { content, error: readError } = readFileSafe(
+      absoluteFilePath,
+      maxFileSize,
+    );
     if (readError) {
-      throw new SemanticLookupError(readError, 'FILE_READ_ERROR');
+      throw new SemanticLookupError(readError, "FILE_READ_ERROR");
     }
 
     // Compute current content hash
@@ -191,10 +225,13 @@ export async function semanticLookup(
     // Check for existing index entry
     const indexId = generateFileIndexId(projectId, relativePath);
     const existingEntries = await storage.getFileIndex(projectId, relativePath);
-    const existingEntry = existingEntries.find(e => e.filePath === relativePath);
+    const existingEntry = existingEntries.find(
+      (e) => e.filePath === relativePath,
+    );
 
     // Determine if we need to reindex
-    const needsReindex = forceReindex ||
+    const needsReindex =
+      forceReindex ||
       !existingEntry ||
       existingEntry.contentHash !== currentHash;
 
@@ -217,8 +254,8 @@ export async function semanticLookup(
 
     if (parseResult.errors.length > 0 && parseResult.lineCount === 0) {
       throw new SemanticLookupError(
-        `Parse error: ${parseResult.errors.join(', ')}`,
-        'PARSE_ERROR'
+        `Parse error: ${parseResult.errors.join(", ")}`,
+        "PARSE_ERROR",
       );
     }
 
@@ -235,7 +272,7 @@ export async function semanticLookup(
       fileType: getFileType(absoluteFilePath),
       lineCount: parseResult.lineCount,
       exports: fileSummary.exports,
-      imports: parseResult.imports.map(i => `${i.name} from ${i.source}`),
+      imports: parseResult.imports.map((i) => `${i.name} from ${i.source}`),
       summary: summaryText,
       complexity: fileSummary.complexity,
       contentHash: currentHash,
@@ -244,6 +281,12 @@ export async function semanticLookup(
 
     // Store the new entry
     await storage.upsertFileIndex(newEntry);
+
+    // Warm the code-map for this file so future lookups can hit the no-read
+    // fast path (and so the index reflects normal tool usage). Best-effort.
+    if (codeMapEnabled()) {
+      refreshFile(projectRoot(input.projectPath), relativePath);
+    }
 
     return {
       filePath: relativePath,
@@ -260,6 +303,56 @@ export async function semanticLookup(
     if (shouldCloseStorage) {
       await storage.close();
     }
+  }
+}
+
+/**
+ * No-read fast path: when the code-map reports the file unchanged by mtime and
+ * the cached file-index summary matches that same content version, return it
+ * without touching the file. Returns null on any miss so the caller reads+parses.
+ *
+ * The code-map stores a full sha256; file-index stores its first 16 hex chars
+ * (computeContentHash) — both over the same content, so a prefix compare ties
+ * the two indexes to the same version.
+ */
+async function semanticLookupFromIndex(
+  projectPath: string,
+  relativePath: string,
+  projectId: string,
+  storage: ContextStorage,
+): Promise<SemanticLookupResult | null> {
+  try {
+    const root = projectRoot(projectPath);
+    const cm = openCodeMap(root);
+    if (!cm) return null;
+    try {
+      const cmProjectId = projectIdFor(root);
+      const fresh = fileFreshnessByMtime(cm, cmProjectId, root, relativePath);
+      if (fresh.state !== "fresh" || !fresh.record) return null;
+
+      const entries = await storage.getFileIndex(projectId, relativePath);
+      const entry = entries.find(
+        (e) =>
+          e.filePath === relativePath &&
+          e.contentHash === fresh.record!.hash.slice(0, 16),
+      );
+      if (!entry) return null;
+
+      return {
+        filePath: relativePath,
+        summary: entry.summary,
+        exports: entry.exports,
+        imports: entry.imports,
+        lineCount: entry.lineCount,
+        complexity: entry.complexity,
+        lastIndexed: entry.indexedAt,
+        needsFullRead: false,
+      };
+    } finally {
+      cm.close();
+    }
+  } catch {
+    return null;
   }
 }
 
@@ -283,7 +376,7 @@ export interface BatchLookupResult {
 export async function batchSemanticLookup(
   filePaths: string[],
   projectPath: string,
-  options: SemanticLookupOptions = {}
+  options: SemanticLookupOptions = {},
 ): Promise<BatchLookupResult> {
   const storage = options.storage || createStorage();
   const shouldCloseStorage = !options.storage;
@@ -296,13 +389,13 @@ export async function batchSemanticLookup(
       try {
         const result = await semanticLookup(
           { filePath, projectPath },
-          { ...options, storage }
+          { ...options, storage },
         );
         results.set(filePath, result);
       } catch (error) {
         errors.set(
           filePath,
-          error instanceof Error ? error : new Error(String(error))
+          error instanceof Error ? error : new Error(String(error)),
         );
       }
     }
@@ -320,18 +413,18 @@ export async function batchSemanticLookup(
 // =============================================================================
 
 export type SemanticLookupErrorCode =
-  | 'FILE_NOT_FOUND'
-  | 'UNSUPPORTED_FILE_TYPE'
-  | 'FILE_READ_ERROR'
-  | 'PARSE_ERROR'
-  | 'STORAGE_ERROR';
+  | "FILE_NOT_FOUND"
+  | "UNSUPPORTED_FILE_TYPE"
+  | "FILE_READ_ERROR"
+  | "PARSE_ERROR"
+  | "STORAGE_ERROR";
 
 export class SemanticLookupError extends Error {
   public readonly code: SemanticLookupErrorCode;
 
   constructor(message: string, code: SemanticLookupErrorCode) {
     super(message);
-    this.name = 'SemanticLookupError';
+    this.name = "SemanticLookupError";
     this.code = code;
     Object.setPrototypeOf(this, SemanticLookupError.prototype);
   }
@@ -347,9 +440,9 @@ export class SemanticLookupError extends Error {
  * This is the entry point called by the MCP server when the tool is invoked.
  */
 export async function handleSemanticLookup(
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Promise<{
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {
   try {
@@ -357,22 +450,26 @@ export async function handleSemanticLookup(
     const filePath = args.filePath;
     const projectPath = args.projectPath;
 
-    if (typeof filePath !== 'string' || !filePath) {
+    if (typeof filePath !== "string" || !filePath) {
       return {
-        content: [{
-          type: 'text',
-          text: 'Error: filePath is required and must be a non-empty string',
-        }],
+        content: [
+          {
+            type: "text",
+            text: "Error: filePath is required and must be a non-empty string",
+          },
+        ],
         isError: true,
       };
     }
 
-    if (typeof projectPath !== 'string' || !projectPath) {
+    if (typeof projectPath !== "string" || !projectPath) {
       return {
-        content: [{
-          type: 'text',
-          text: 'Error: projectPath is required and must be a non-empty string',
-        }],
+        content: [
+          {
+            type: "text",
+            text: "Error: projectPath is required and must be a non-empty string",
+          },
+        ],
         isError: true,
       };
     }
@@ -384,20 +481,24 @@ export async function handleSemanticLookup(
     const output = formatLookupResult(result);
 
     return {
-      content: [{
-        type: 'text',
-        text: output,
-      }],
+      content: [
+        {
+          type: "text",
+          text: output,
+        },
+      ],
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const code = error instanceof SemanticLookupError ? error.code : 'UNKNOWN';
+    const code = error instanceof SemanticLookupError ? error.code : "UNKNOWN";
 
     return {
-      content: [{
-        type: 'text',
-        text: `Error [${code}]: ${message}`,
-      }],
+      content: [
+        {
+          type: "text",
+          text: `Error [${code}]: ${message}`,
+        },
+      ],
       isError: true,
     };
   }
@@ -410,9 +511,9 @@ function formatLookupResult(result: SemanticLookupResult): string {
   const lines: string[] = [
     `File: ${result.filePath}`,
     `Lines: ${result.lineCount} | Complexity: ${result.complexity}`,
-    '',
+    "",
     result.summary,
-    '',
+    "",
   ];
 
   if (result.exports.length > 0) {
@@ -424,7 +525,7 @@ function formatLookupResult(result: SemanticLookupResult): string {
     if (result.exports.length > 10) {
       lines.push(`  ... and ${result.exports.length - 10} more`);
     }
-    lines.push('');
+    lines.push("");
   }
 
   if (result.imports.length > 0) {
@@ -436,17 +537,19 @@ function formatLookupResult(result: SemanticLookupResult): string {
     if (result.imports.length > 10) {
       lines.push(`  ... and ${result.imports.length - 10} more`);
     }
-    lines.push('');
+    lines.push("");
   }
 
   if (result.needsFullRead) {
-    lines.push('Note: File has changed since last index. Consider reading full content.');
+    lines.push(
+      "Note: File has changed since last index. Consider reading full content.",
+    );
   }
 
   const indexedDate = new Date(result.lastIndexed).toISOString();
   lines.push(`Last indexed: ${indexedDate}`);
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 // =============================================================================
@@ -454,23 +557,23 @@ function formatLookupResult(result: SemanticLookupResult): string {
 // =============================================================================
 
 export const semanticLookupToolDefinition = {
-  name: 'semantic_lookup',
+  name: "semantic_lookup",
   description:
-    'Get a semantic summary of a file without reading its full content. ' +
-    'Returns file purpose, exports, imports, complexity, and line count. ' +
-    'Use this to decide if you need to read the full file content.',
+    "Get a semantic summary of a file without reading its full content. " +
+    "Returns file purpose, exports, imports, complexity, and line count. " +
+    "Use this to decide if you need to read the full file content.",
   inputSchema: {
-    type: 'object' as const,
+    type: "object" as const,
     properties: {
       filePath: {
-        type: 'string',
-        description: 'Path to the file to look up (relative to project root)',
+        type: "string",
+        description: "Path to the file to look up (relative to project root)",
       },
       projectPath: {
-        type: 'string',
-        description: 'Absolute path to the project root directory',
+        type: "string",
+        description: "Absolute path to the project root directory",
       },
     },
-    required: ['filePath', 'projectPath'],
+    required: ["filePath", "projectPath"],
   },
 };

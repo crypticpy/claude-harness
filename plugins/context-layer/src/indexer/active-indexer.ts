@@ -9,6 +9,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import {
+  codeMapEnabled,
+  projectRoot,
+  openCodeMap,
+  runIndex,
+} from './code-map-service';
 
 // =============================================================================
 // Types
@@ -382,6 +388,28 @@ async function performIndexing(
   const errors: string[] = [];
   const keyFiles: string[] = [];
   let filesIndexed = 0;
+
+  // When the code map is enabled, do the real work: populate code-map.db with
+  // file/symbol/edge rows. Otherwise keep the lightweight readability check.
+  if (codeMapEnabled()) {
+    const root = projectRoot(projectPath);
+    const cm = openCodeMap(root);
+    if (cm) {
+      try {
+        const res = runIndex(cm, root, { mode: 'full' });
+        return {
+          filesIndexed: res.filesIndexed,
+          keyFiles: [],
+          errors:
+            res.errors > 0
+              ? [`${res.errors} parse error(s) during indexing`]
+              : [],
+        };
+      } finally {
+        cm.close();
+      }
+    }
+  }
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
