@@ -16,6 +16,7 @@ import { join } from 'path';
 import { callLlm } from './llm-call.mjs';
 import { getApiKey } from './api-key.mjs';
 import { isPoisonedMemory } from './session-memory.mjs';
+import { collectStructuredContext, renderStructuredFacts } from './structured-context.mjs';
 
 const EVOLUTION_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'evolution');
 const PROPOSALS_FILE = join(EVOLUTION_DIR, 'proposals.md');
@@ -155,7 +156,7 @@ function aggregatePatterns(entries) {
 /**
  * Call the LLM to synthesize patterns into actionable proposals.
  */
-async function synthesizeProposals(aggregated, memories, config) {
+async function synthesizeProposals(aggregated, memories, structured, config) {
     const apiKey = getApiKey();
     if (!apiKey) {
         throw new Error('No API key available for evolution synthesis');
@@ -180,8 +181,10 @@ async function synthesizeProposals(aggregated, memories, config) {
         currentConfig = readFileSync(configPath, 'utf-8');
     }
 
-    const prompt = `You are a Claude Code harness optimizer. Analyze accumulated session data and propose specific improvements.
+    const structuredBlock = renderStructuredFacts(structured);
 
+    const prompt = `You are a Claude Code harness optimizer. Analyze accumulated session data and propose specific improvements.
+${structuredBlock ? '\n' + structuredBlock + '\n' : ''}
 ## Accumulated Data (${aggregated.sessionCount} sessions, ${aggregated.diagnosisCount} diagnosed)
 
 ### Aggregate Stats
@@ -319,24 +322,27 @@ export async function evolve(config) {
         mkdirSync(EVOLUTION_DIR, { recursive: true });
     }
 
-    // Step 1: Collect data
+    // Step 1: Collect data. Prefer the deterministic v2 substrate (checkpoints
+    // + typed memory); v1 lessons/session-memories are the narrative fallback.
+    const structured = collectStructuredContext(process.env.CLAUDE_PROJECT_DIR || null);
     const lessons = collectLessons();
     const memories = collectSessionMemories();
 
-    if (lessons.length === 0 && memories.length === 0) {
+    if (lessons.length === 0 && memories.length === 0 && !structured.available) {
         return {
             success: false,
-            message: 'No lesson data found. The self-evolution loop needs session data from trace-diagnosis (PreCompact hook). Run a few sessions with significant tool usage first.',
+            message: 'No analysis data found. /evolve consumes deterministic checkpoints + typed memory first (event ledger), then trace-diagnosis lessons. Run a few sessions with significant tool usage first.',
             proposalsPath: null,
         };
     }
 
-    // Gate: require minimum sessions before spending API credits
+    // Gate: require minimum sessions before spending API credits — but the
+    // deterministic substrate counts as sufficient signal on its own.
     const minSessions = config.evolution?.minSessionsForAnalysis || 3;
-    if (lessons.length < minSessions) {
+    if (!structured.available && lessons.length < minSessions) {
         return {
             success: false,
-            message: `Only ${lessons.length} lesson entries found (minimum: ${minSessions}). Run more sessions to accumulate data before evolution analysis.`,
+            message: `Only ${lessons.length} lesson entries found (minimum: ${minSessions}) and no deterministic checkpoints/memory. Run more sessions to accumulate data before evolution analysis.`,
             proposalsPath: null,
         };
     }
@@ -347,7 +353,7 @@ export async function evolve(config) {
     // Step 3: Synthesize proposals via LLM
     let result;
     try {
-        result = await synthesizeProposals(aggregated, memories, config);
+        result = await synthesizeProposals(aggregated, memories, structured, config);
     } catch (err) {
         return {
             success: false,

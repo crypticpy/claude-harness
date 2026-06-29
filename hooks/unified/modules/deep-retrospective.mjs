@@ -19,6 +19,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, m
 import { join, basename } from 'path';
 import { callLlm } from './llm-call.mjs';
 import { getApiKey } from './api-key.mjs';
+import { collectStructuredContext, renderStructuredFacts } from './structured-context.mjs';
 
 const CLAUDE_HOME = join(process.env.HOME, '.claude');
 const RETRO_DIR = join(CLAUDE_HOME, 'hooks', 'unified', 'evolution');
@@ -350,8 +351,13 @@ function aggregateAllData() {
     const projectKnowledge = extractProjectKnowledge();
     const activityStats = extractActivityStats();
 
+    // Deterministic v2 substrate for the active project — consumed first, ahead
+    // of the cross-project v1 narrative sweep above.
+    const structured = collectStructuredContext(process.env.CLAUDE_PROJECT_DIR || null);
+
     return {
         extractedAt: new Date().toISOString(),
+        structured,
         prompts: promptPatterns,
         sessions: sessionMemories,
         edits: fileEditPatterns,
@@ -383,7 +389,12 @@ function buildSynthesisPrompt(data) {
 
 Your goal: extract META-LEARNINGS that span across projects, time, and tech stacks. This is not about individual sessions — it's about patterns in how this user works with Claude Code.
 
-## Prompt History Analysis
+`;
+
+    const structuredBlock = renderStructuredFacts(data.structured);
+    if (structuredBlock) prompt += structuredBlock + '\n\n';
+
+    prompt += `## Prompt History Analysis
 
 `;
 
@@ -642,7 +653,8 @@ export async function retrospective(config) {
 
     // Quick sanity check
     const hasData = (aggregated.prompts?.totalPrompts || 0) > 0 ||
-        (aggregated.sessions?.totalSessions || 0) > 0;
+        (aggregated.sessions?.totalSessions || 0) > 0 ||
+        aggregated.structured?.available === true;
     if (!hasData) {
         return {
             success: false,
