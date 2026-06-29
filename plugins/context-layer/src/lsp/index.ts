@@ -15,7 +15,7 @@ export {
   LanguageId,
   EXTENSION_TO_LANGUAGE,
   getLanguageFromPath,
-} from './types';
+} from "./types";
 
 export {
   CacheEntry,
@@ -25,4 +25,25 @@ export {
   computeFileHash,
   getGlobalCache,
   resetGlobalCache,
-} from './cache';
+} from "./cache";
+
+export { encodeMessage, MessageBuffer, JsonRpcMessage } from "./protocol";
+export { LspClient, ILspClient, LspClientOptions, Diagnostic } from "./client";
+export {
+  LspServerManager,
+  ServerManagerOptions,
+  ResolvedSpec,
+  serversFor,
+  commandOnPath,
+  getGlobalServerManager,
+  resetGlobalServerManager,
+} from "./server-manager";
+export {
+  Position,
+  OperationOptions,
+  definition,
+  references,
+  hover,
+  documentSymbols,
+  diagnostics,
+} from "./operations";
