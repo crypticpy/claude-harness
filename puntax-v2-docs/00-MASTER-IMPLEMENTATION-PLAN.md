@@ -20,21 +20,21 @@ reserving LLM distillation for high-value, threshold-triggered moments.
 
 ### Measurable success criteria (definition of "v2 done")
 
-| Dimension                    | v1 today                                    | v2 target                                                                               |
-| ---------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Routine prompt injection     | Always-on `session-memory` + context-report | ≤300 tokens, relevance-gated; near-zero when nothing matches                            |
-| Routine `PreCompact`         | Always 1 LLM call (≤500KB transcript)       | Deterministic reducer, **0 LLM calls**; LLM only on threshold                           |
-| Session continuity substrate | LLM narrative memory JSON                   | Append-only **event ledger** + deterministic **checkpoints**                            |
-| Code intelligence            | Regex parser, scan-based impact             | **Code-map index** (SQLite) + Tree-sitter + LSP, scan fallback                          |
-| Memory                       | Untyped `lessons.jsonl` narratives          | **Typed, provenance-backed** memories with confidence tiers                             |
-| Permission                   | `cf-approve` direct                         | **Governor** in front: risk-classified, audited, candidate accrual, cf-approve fallback |
-| Tests                        | **None**                                    | Vitest suite covering reducers/rankers/policy/parsers; no network/LLM in tests          |
-| Rollback                     | n/a                                         | Every phase behind a `PUNTAX_*` flag, individually revertible                           |
+| Dimension                    | v1 today                                         | v2 target                                                                                                                                               |
+| ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Routine prompt injection     | Always-on `session-memory` + context-report      | ≤300 tokens, relevance-gated; near-zero when nothing matches                                                                                            |
+| Routine `PreCompact`         | Always 1 LLM call (≤500KB transcript)            | Deterministic reducer, **0 LLM calls**; LLM only on threshold                                                                                           |
+| Session continuity substrate | LLM narrative memory JSON                        | Append-only **event ledger** + deterministic **checkpoints**                                                                                            |
+| Code intelligence            | Regex parser, scan-based impact                  | **Code-map index** (SQLite) + Tree-sitter + LSP, scan fallback                                                                                          |
+| Memory                       | Untyped `lessons.jsonl` narratives               | **Typed, provenance-backed** memories with confidence tiers                                                                                             |
+| Permission                   | `cf-approve` (LLM-gated, at `PermissionRequest`) | **Unchanged** — cf-approve already gates/denies destructive actions and works fine; v2 only passively mirrors permission outcomes into the event ledger |
+| Tests                        | **None**                                         | Vitest suite covering reducers/rankers/policy/parsers; no network/LLM in tests                                                                          |
+| Rollback                     | n/a                                              | Every phase behind a `PUNTAX_*` flag, individually revertible                                                                                           |
 
 ### Non-negotiables (carried verbatim from the brief)
 
 1. Do not weaken permissions. The permission path stays independent of memory/context.
-2. LLM output may **propose**; only deterministic validation or explicit user approval **activates** (esp. permission rules).
+2. The permission layer is **cf-approve, left exactly as-is** — it already LLM-gates and denies destructive actions at `PermissionRequest`. v2 adds **no** governor, veto, rule store, or candidate accrual; it only _observes_ permission outcomes (passive ledger audit). No PUNTAX component activates permission policy.
 3. Do not inject large memory by default. Context is routed and budgeted.
 4. Non-permission hooks **fail open**; permission failures **fail closed** for risky ops.
 5. Source files, tests, diagnostics, and explicit user instructions outrank memory.
@@ -66,7 +66,7 @@ production-grade code**, not placeholder.
 - `indexer/active-indexer.ts` + `parser.ts` — regex parser; indexer does not populate a real symbol/edge graph.
 - `impact_check` — regex full-scan, re-scans every call (no cached import graph).
 - **No test suite** — `package.json` has `"test": "vitest"` but zero test files. ← cross-cutting blocker.
-- **No PUNTAX config namespace, no feature flags, no event ledger, no typed memory, no permission governor.**
+- **No PUNTAX config namespace, no feature flags, no event ledger, no typed memory.** (Permissions are _not_ a gap — cf-approve already covers them; see Phase 4.)
 
 **Inconsistent storage tiers** (a v2 design decision, see §4): current SQLite lives at the
 **global** `~/.claude/plugins/context-layer/data/context.db`; brain files live **project-local**
@@ -81,7 +81,7 @@ Agentic harness (Claude Code / Codex / QuadCode)
         │
         ▼
 CONTROL PLANE  — hooks/unified/unified-hook.mjs
-   Permission Governor · Context Router entry · Event Recorder · Session Reducer · Quality/Verify gates
+   Permission pass-through (cf-approve, unchanged) · Context Router entry · Event Recorder · Session Reducer · Quality/Verify gates
         │
         ▼
 KNOWLEDGE PLANE
@@ -107,14 +107,14 @@ denominator is **environment variables**, which the rollback strategy already sp
   (hooks read it directly; the MCP server reads the same file by resolving repo root from `projectDir`).
 - Master on/off per subsystem via env flags both runtimes honor:
   `PUNTAX_CONTEXT_ROUTER=`, `PUNTAX_EVENT_LEDGER=`, `PUNTAX_PRECOMPACT_MODE=deterministic|llm`,
-  `PUNTAX_CODE_MAP=`, `PUNTAX_PERMISSION_GOVERNOR=`, `PUNTAX_LLM_DISTILLATION=`.
+  `PUNTAX_CODE_MAP=`, `PUNTAX_LLM_DISTILLATION=`. (No permission flag — the permission layer is unchanged.)
 - Defaults: new behavior **off** until its phase passes acceptance, then flipped on by default with the flag retained for rollback.
 
 **D2 — Storage tiers (fix the inconsistency).** Adopt the doc's layout:
 
-- `<repo>/.claude/context-layer/` → `events.jsonl`, `checkpoints.jsonl`, `memories.jsonl`,
-  `permissions.jsonl`, `code-map.db`, plus existing `hot-files.json` / `file-insights.json` / `conventions.json` / `lessons.jsonl`.
-- `~/.claude/context-layer/global/` → `global-memory.jsonl`, `permission-rules.jsonl`, `user-prefs.json`.
+- `<repo>/.claude/context-layer/` → `events.jsonl` (incl. `permission` audit events), `checkpoints.jsonl`, `memories.jsonl`,
+  `code-map.db`, plus existing `hot-files.json` / `file-insights.json` / `conventions.json` / `lessons.jsonl`.
+- `~/.claude/context-layer/global/` → `global-memory.jsonl`, `user-prefs.json`. (No `permission-rules.jsonl` — there is no PUNTAX rule store.)
 - `~/.claude/cache/context-layer/` → transient indexes / temp.
 - The **code map gets a new project-local `code-map.db`** with the schema in `schemas/code-map.schema.sql`
   (tables `projects/files/symbols/edges/reads/chunks/diagnostics/index_runs`). This is **distinct** from the
@@ -138,7 +138,7 @@ stays valid JSON. `install.sh` must not fail if optional components are absent.
 
 **Deliverables**
 
-- `puntax` block in `hooks/unified/config.json` (budgets, precompact thresholds, codeMap, governor — all defaulting safe/off) mirroring `schemas/puntax-config.example.json`.
+- `puntax` block in `hooks/unified/config.json` (budgets, precompact thresholds, codeMap — all defaulting safe/off) mirroring `schemas/puntax-config.example.json`. (Omit the `permissionGovernor` block — permissions are untouched in v2.)
 - A tiny shared config loader usable from both `.mjs` hooks and TS (`readPuntaxConfig(projectDir)`), honoring `PUNTAX_*` env overrides.
 - Vitest config + `tests/` tree + fixtures (sample transcript JSONL, sample brain files, a temp-repo helper).
 - Storage path helper (`resolveContextDir(projectDir)`) implementing the §4 tier layout; create dirs lazily, never outside the repo without permission.
@@ -208,20 +208,39 @@ stays valid JSON. `install.sh` must not fail if optional components are absent.
 
 ---
 
-## 9. Phase 4 — Permission Governor
+## 9. Phase 4 — Permissions: Leave As-Is (passive audit only)
 
-**Goal:** auditable policy + safe candidate accrual, **preserving `cf-approve`**.
+**Goal (user-directed):** **change nothing about the permission layer.** `cf-approve` already
+LLM-gates and denies possible destructive actions, and it already fires exactly at the harness's own
+`PermissionRequest` decision points. It works fine. v2 does **not** add a governor, a safety veto, a
+risk classifier, a rule store, or candidate-rule accrual. The current permissions profile is preserved
+verbatim.
+
+> This is a deliberate departure from the bundle's `tasks/phase-4-permission-governor.md` and
+> `docs/04`. After review, the "governor" they describe largely re-implements behavior `cf-approve`
+> already provides at the same surface — so building it would add risk and maintenance for no gain.
+
+**The only v2 touch — passive observation (belongs to the Phase 2 event ledger):**
+
+- The existing `PermissionRequest` → `cf-approve` wiring in `settings.template.json` stays **unchanged**.
+  We do not interpose any PUNTAX module in the decision path.
+- A `permission` event is recorded **after the fact** — mirroring the decision cf-approve made
+  (`{ kind: "permission", tool, decision, risk, commandHash }` per `schemas/event.schema.json`) — so
+  checkpoints, `what_changed`, and the Phase 5 distillation thresholds (e.g. repeated permission
+  denials) can see it. This is read-only telemetry; it never re-evaluates or overrides a decision.
+- Capture it via the existing `PostToolUse`/event-writer path (or a non-blocking observer), **not** by
+  routing `PermissionRequest` through a hook that could alter the outcome.
 
 **Files**
 
-- _New_ `hooks/unified/modules/permission-gate.mjs` — normalize → classify risk → check active/candidate rules → **fall back to `cf-approve`** → write `permission` event → maybe accrue candidate. Sits **in front** of cf-approve; never bypasses it for unknown/risky actions.
-- _New_ rule store (`permissions.jsonl` project + `permission-rules.jsonl` global) validated against `schemas/permission-rule.schema.json`.
-- _Modify_ `settings.template.json` — route `PermissionRequest` through `unified-hook.mjs permission`; cf-approve remains the fallback authority.
-- _New_ MCP `permission_explain` (+ optional `permission_candidates/promote/revoke`, promote/revoke only behind explicit user confirmation).
-- **Hard never-auto-promote list:** `rm -rf`, `sudo`, chmod/chown outside project, force push, `git push`, package publish, cloud deploy, secret/credential reads, destructive DB ops, `curl|wget | sh`, writes outside repo.
+- _No change_ to `settings.template.json` `PermissionRequest` routing; _no_ new permission modules.
+- _Reuse_ the Phase 2 `event-writer.mjs` to append `permission` events from observed outcomes.
 
-**Acceptance:** existing permission flow still works; destructive commands never auto-promote; safe repeated commands (≥3 approvals, in-project, no network, success) create **candidate-only** rules; candidates inactive until promotion; every decision logged as an event.
-**Effort:** MEDIUM (4–6 days). **Rollback:** `PUNTAX_PERMISSION_GOVERNOR=false` → `PermissionRequest` reverts to direct `cf-approve`.
+**Acceptance:** `settings.template.json` permission wiring is byte-for-byte unchanged; cf-approve remains
+the sole permission authority; permission outcomes appear as `permission` events in the ledger; no PUNTAX
+code can allow/deny/alter a permission decision.
+**Effort:** XS (folds into Phase 2; ~0.5 day for the `permission` event mapping). **Rollback:** governed
+by `PUNTAX_EVENT_LEDGER` (no separate permission flag — there is no permission behavior to roll back).
 
 ---
 
@@ -248,35 +267,34 @@ _Optional polish:_ the `/puntax …` maintenance command pack from `docs/12` (st
 ```
 Phase 0 (foundations)  ──┬─► Phase 1 (router + precompact stub)
                          │        │
-                         │        ├─► Phase 2 (event ledger + reducer)  ──► Phase 5 (distillation)
+                         │        ├─► Phase 2 (event ledger + reducer; incl. Phase 4 permission-event mapping)  ──► Phase 5 (distillation)
                          │        │
                          │        └─► Phase 3 (code map / LSP)  ─────────► (feeds richer puntax_context)
-                         │
-                         └─► Phase 4 (permission governor)  [independent; needs Phase 2 event writer for audit]
 ```
 
 - **Strictly ordered:** 0 → 1 → 2 → 5. Phase 5's quality depends on Phase 2 checkpoints/events.
-- **Parallelizable:** Phase 3 (code map) and Phase 4 (governor) are largely independent of each other and of Phase 2 internals (Phase 4 only needs the Phase 2 event _writer_ for its audit log).
-- **Total effort:** ~4–6 weeks single-threaded; ~3–4 weeks if Phase 3 and Phase 4 run in parallel after Phase 2. Phase 3/LSP is the critical path.
+- **Phase 4 is folded into Phase 2** — it is just the `permission` event-mapping (passive audit); there is no standalone permission build.
+- **Parallelizable:** Phase 3 (code map) is independent of the 1→2→5 chain and is the long pole.
+- **Total effort:** ~4–6 weeks single-threaded; ~3–4 weeks if Phase 3 runs in parallel with the 1→2→5 chain. Phase 3/LSP is the critical path.
 
 ---
 
 ## 12. Risks & Mitigations
 
-| Risk                                                  | Mitigation                                                                                                                                              |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LSP lifecycle complexity (Phase 3) blows the timeline | Ship 3a (Tree-sitter index) first — it delivers most value; LSP (3b) is additive and flag-gated                                                         |
-| Two-runtime config drift (hooks vs MCP)               | Single `puntax` config block + `PUNTAX_*` env flags honored by both; one loader, tested                                                                 |
-| Governor weakens safety                               | Governor sits _in front of_, never replaces, cf-approve; hard never-promote list; fail-closed on risky ops; full-diff review gate (touches permissions) |
-| Context poisoning via memory                          | Every memory carries provenance; LLM memory lower-confidence; injected memory treated as quoted data; source/tests outrank memory                       |
-| Storage migration breaks existing tools               | New `code-map.db` is separate from `context.db`; migrate readers tool-by-tool behind flags; old paths kept until parity tests pass                      |
-| No existing tests → regressions invisible             | Phase 0 stands up Vitest before any behavior change; each phase gate is test-proven parity                                                              |
+| Risk                                                  | Mitigation                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LSP lifecycle complexity (Phase 3) blows the timeline | Ship 3a (Tree-sitter index) first — it delivers most value; LSP (3b) is additive and flag-gated                                                                                                                                                                                  |
+| Two-runtime config drift (hooks vs MCP)               | Single `puntax` config block + `PUNTAX_*` env flags honored by both; one loader, tested                                                                                                                                                                                          |
+| Permission behavior accidentally changed              | v2 touches **nothing** in the permission path — `settings.template.json` `PermissionRequest` wiring is unchanged and cf-approve stays the sole authority; the only addition is read-only `permission` telemetry; a regression test asserts the wiring is byte-for-byte identical |
+| Context poisoning via memory                          | Every memory carries provenance; LLM memory lower-confidence; injected memory treated as quoted data; source/tests outrank memory                                                                                                                                                |
+| Storage migration breaks existing tools               | New `code-map.db` is separate from `context.db`; migrate readers tool-by-tool behind flags; old paths kept until parity tests pass                                                                                                                                               |
+| No existing tests → regressions invisible             | Phase 0 stands up Vitest before any behavior change; each phase gate is test-proven parity                                                                                                                                                                                       |
 
 ---
 
 ## 13. Verification Strategy (per `docs/11`)
 
-- **Unit (no network/LLM):** ranker/budget, event validate+replay, reducer (working/changed/openLoops), risk classifier + candidate accrual, code-map freshness/fallback, migration adapters.
+- **Unit (no network/LLM):** ranker/budget, event validate+replay, reducer (working/changed/openLoops), `permission` event mapping (observed outcome → ledger entry, no decision logic), code-map freshness/fallback, migration adapters.
 - **Integration:** MCP `tools/list` includes new tools; `puntax_context` returns compact context; hooks import under Node ≥20; post-edit records event + refreshes index; precompact deterministic mode writes checkpoint with **no API key**.
 - **Regression:** existing `semantic_lookup`/`brain_search` still work; `settings.template.json` stays valid JSON; `install.sh` tolerates missing optional components.
 - **Per-merge:** run `agent/REVIEW_CHECKLIST.md` (safety, token-efficiency, correctness, migration-compat, tests). Run `/freview` on phases touching permissions/input-handling or ≥6 files.
@@ -289,7 +307,7 @@ Phase 0 (foundations)  ──┬─► Phase 1 (router + precompact stub)
 2. Routine prompt injection ≤300 tokens and relevance-gated; routine precompact makes **zero** LLM calls.
 3. Event ledger + checkpoints reconstruct session state deterministically; `what_changed`/`session_checkpoint` read from them.
 4. Code map answers `semantic_lookup`/`symbol_context`/`impact_check` from a fresh index with LSP/Tree-sitter/regex confidence tiers and stale detection.
-5. Permission governor audits every decision, accrues candidate-only rules, never auto-promotes destructive ops, preserves cf-approve.
+5. Permission layer untouched — cf-approve remains the sole authority at `PermissionRequest`; v2 adds only read-only `permission` telemetry to the ledger and no PUNTAX code can allow/deny/alter a decision.
 6. LLM distillation is threshold-only and produces typed, lower-confidence, provenance-backed memory.
 7. Vitest suite green; `agent/REVIEW_CHECKLIST.md` passes; existing v1 files/tools/config still work.
 
