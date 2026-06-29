@@ -50,6 +50,9 @@ export interface PuntaxConfig {
     dbPath: string;
     backendOrder: string[];
   };
+  lsp: {
+    enabled: boolean;
+  };
 }
 
 export type RouterMode = keyof PuntaxConfig["contextRouter"]["budgets"];
@@ -90,6 +93,9 @@ export const DEFAULT_PUNTAX: PuntaxConfig = {
     enabled: false,
     dbPath: ".claude/context-layer/code-map.db",
     backendOrder: ["lsp", "tree-sitter", "regex"],
+  },
+  lsp: {
+    enabled: false,
   },
 };
 
@@ -164,6 +170,7 @@ export function readPuntaxConfig(
     "PUNTAX_CODE_MAP",
     merged.codeMap.enabled,
   );
+  merged.lsp.enabled = envFlag(env, "PUNTAX_LSP", merged.lsp.enabled);
   merged.llmDistillation.enabled = envFlag(
     env,
     "PUNTAX_LLM_DISTILLATION",

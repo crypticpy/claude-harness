@@ -22,6 +22,12 @@ import {
   openCodeMap,
 } from "../indexer/code-map-service";
 import { projectIdFor } from "../storage/code-map";
+import {
+  lspEnabled,
+  lspDocumentSymbols,
+  lspReferences,
+  lspDiagnostics,
+} from "../lsp/lsp-service";
 
 // ============================================================================
 // Types
@@ -54,6 +60,8 @@ export interface ImpactResult {
   dependents: Dependent[];
   riskLevel: "low" | "medium" | "high" | "critical";
   suggestions: string[];
+  /** Current LSP diagnostics for the target file (only set on the LSP path). */
+  diagnostics?: Array<{ line: number; severity?: number; message: string }>;
   metadata: {
     totalFiles: number;
     filesSearched: number;
@@ -146,6 +154,31 @@ export async function checkImpact(
   }
 
   try {
+    // LSP tier (symbol-level): real reference sites + current diagnostics, which
+    // the import-graph scan can't resolve. Falls through on any miss (no server,
+    // symbol not found).
+    if (symbolName && lspEnabled()) {
+      const viaLsp = await impactFromLsp(
+        normalizedProjectPath,
+        normalizedFilePath,
+        symbolName,
+        startTime,
+      );
+      if (viaLsp) {
+        cache.set(cacheKey, viaLsp, fileHash, normalizedFilePath);
+        return {
+          success: true,
+          data: viaLsp,
+          metadata: {
+            cached: false,
+            duration: viaLsp.metadata.duration,
+            filesSearched: viaLsp.metadata.filesSearched,
+            usedFallback: false,
+          },
+        };
+      }
+    }
+
     // Index-first (file-level only): code-map import edges fully capture which
     // files import the target. Symbol-level falls through to the scan below —
     // call/reference sites need the Tree-sitter/LSP tiers (Phase 3b).
@@ -813,6 +846,79 @@ function generateSuggestions(
  * any miss (file not indexed, db unavailable, file outside project) so the
  * caller falls back to the scan. Bootstraps a full index on first use.
  */
+/**
+ * Symbol-level impact via LSP: locate the symbol in its file, ask the language
+ * server for every reference site, and attach the file's current diagnostics.
+ * Returns null on any miss (server unavailable, symbol absent) so the caller
+ * falls back to the import-graph scan.
+ */
+async function impactFromLsp(
+  projectRootAbs: string,
+  targetFileAbs: string,
+  symbolName: string,
+  startTime: number,
+): Promise<ImpactResult | null> {
+  const symbols = await lspDocumentSymbols(targetFileAbs, projectRootAbs);
+  if (!symbols) return null;
+  const named = symbols.filter((s) => s.name === symbolName);
+  if (named.length === 0) return null;
+  // Prefer a top-level declaration (no container) over a member.
+  named.sort(
+    (a, b) =>
+      (a.containerName ? 1 : 0) - (b.containerName ? 1 : 0) || a.line - b.line,
+  );
+  const sym = named[0];
+
+  const refs = await lspReferences(
+    targetFileAbs,
+    { line: sym.line, character: sym.character ?? 0 },
+    projectRootAbs,
+    false,
+  );
+  if (!refs) return null;
+
+  // Drop the declaration site itself; every other reference is a dependent.
+  // LSP references don't carry a syntactic role, so label them "unknown".
+  const dependents: Dependent[] = refs
+    .filter(
+      (r) =>
+        !(path.resolve(r.filePath) === targetFileAbs && r.line === sym.line),
+    )
+    .map((r) => ({
+      filePath: path.resolve(r.filePath),
+      line: r.line,
+      usage: "unknown" as const,
+      symbolUsed: symbolName,
+      context: r.context || `references ${symbolName}`,
+    }));
+
+  const diags = await lspDiagnostics(targetFileAbs, projectRootAbs);
+  const fileSet = new Set(dependents.map((d) => d.filePath));
+  const riskLevel = calculateRiskLevel(dependents);
+  const suggestions = generateSuggestions(dependents, symbolName, riskLevel);
+
+  return {
+    symbol: symbolName,
+    filePath: targetFileAbs,
+    dependents,
+    riskLevel,
+    suggestions,
+    diagnostics: diags
+      ? diags.map((d) => ({
+          line: d.range.start.line + 1,
+          severity: d.severity,
+          message: d.message,
+        }))
+      : undefined,
+    metadata: {
+      totalFiles: fileSet.size,
+      filesSearched: fileSet.size,
+      duration: Date.now() - startTime,
+      cached: false,
+    },
+  };
+}
+
 function impactFromIndex(
   projectRootAbs: string,
   targetFileAbs: string,

@@ -28,6 +28,12 @@ import {
   fileFreshnessByMtime,
 } from "../indexer/code-map-service";
 import {
+  lspEnabled,
+  lspDocumentSymbols,
+  lspDefinition,
+  lspHover,
+} from "../lsp/lsp-service";
+import {
   CodeMap,
   projectIdFor,
   fileIdFor,
@@ -102,9 +108,23 @@ export async function getSymbolContext(
     return cached;
   }
 
+  // LSP tier (docs/06 Tier 1): when enabled and a defining file is known, ask
+  // the language server for the symbol's span + hover signature. Highest
+  // confidence; falls through on any miss (no server, symbol not found).
+  if (filePath && lspEnabled()) {
+    const viaLsp = await symbolContextFromLsp(
+      symbolName,
+      filePath,
+      projectPath,
+    );
+    if (viaLsp) {
+      cache.set(cacheKey, viaLsp, "lsp_result", projectPath);
+      return viaLsp;
+    }
+  }
+
   // Index-first tier (code-map): answer from the symbol table without scanning
   // the project, when the defining file is fresh. Falls through on any miss.
-  // Tier order per docs/06 will gain LSP/Tree-sitter ahead of this in Phase 3b.
   if (codeMapEnabled()) {
     const indexed = symbolContextFromIndex(symbolName, filePath, projectPath);
     if (indexed) {
@@ -606,6 +626,52 @@ function mapSymbolKind(kind: string): SymbolKind {
     default:
       return "unknown";
   }
+}
+
+/**
+ * Resolve a symbol via the LSP tier: locate it in the file's document symbols,
+ * then hover its declaration for signature/type info. Returns null on any miss
+ * (server unavailable, symbol absent) so the caller falls back to lower tiers.
+ */
+async function symbolContextFromLsp(
+  symbolName: string,
+  filePath: string,
+  projectPath: string,
+): Promise<SymbolContextResult | null> {
+  const root = projectRoot(projectPath);
+  const absFile = path.resolve(projectPath, filePath);
+
+  const symbols = await lspDocumentSymbols(absFile, root);
+  if (!symbols || symbols.length === 0) return null;
+
+  const named = symbols.filter((s) => s.name === symbolName);
+  if (named.length === 0) return null;
+  // Prefer a top-level declaration (no container) over a member.
+  named.sort(
+    (a, b) =>
+      (a.containerName ? 1 : 0) - (b.containerName ? 1 : 0) || a.line - b.line,
+  );
+  const sym = named[0];
+  const pos = { line: sym.line, character: sym.character ?? 0 };
+
+  // Resolve the canonical definition (follows imports/re-exports); fall back to
+  // the document-symbol's own span when the server returns nothing.
+  const defs = await lspDefinition(absFile, pos, root);
+  const location =
+    defs && defs.length > 0
+      ? { filePath: defs[0].filePath, line: defs[0].line }
+      : { filePath: absFile, line: sym.line };
+
+  const hover = await lspHover(absFile, pos, root);
+
+  return {
+    name: sym.name,
+    kind: mapSymbolKind(sym.kind),
+    signature: hover?.type || sym.name,
+    documentation: hover?.documentation ?? "",
+    location,
+    related: [],
+  };
 }
 
 /**

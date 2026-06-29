@@ -228,3 +228,8 @@ export function getGlobalServerManager(): LspServerManager {
 export function resetGlobalServerManager(): void {
   globalManager = null;
 }
+
+/** Replace the process-global manager (tests inject a mock-backed manager). */
+export function setGlobalServerManager(manager: LspServerManager): void {
+  globalManager = manager;
+}

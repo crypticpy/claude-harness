@@ -48,6 +48,9 @@ export const DEFAULT_PUNTAX = {
     dbPath: '.claude/context-layer/code-map.db',
     backendOrder: ['lsp', 'tree-sitter', 'regex'],
   },
+  lsp: {
+    enabled: false,
+  },
 };
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -103,6 +106,7 @@ export function readPuntaxConfig(config = {}, env = process.env) {
   merged.contextRouter.enabled = envFlag(env, 'PUNTAX_CONTEXT_ROUTER', merged.contextRouter.enabled);
   merged.eventLedger.enabled = envFlag(env, 'PUNTAX_EVENT_LEDGER', merged.eventLedger.enabled);
   merged.codeMap.enabled = envFlag(env, 'PUNTAX_CODE_MAP', merged.codeMap.enabled);
+  merged.lsp.enabled = envFlag(env, 'PUNTAX_LSP', merged.lsp.enabled);
   merged.llmDistillation.enabled = envFlag(env, 'PUNTAX_LLM_DISTILLATION', merged.llmDistillation.enabled);
 
   const mode = env?.PUNTAX_PRECOMPACT_MODE;

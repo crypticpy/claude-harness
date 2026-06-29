@@ -34,6 +34,7 @@ import {
   type PuntaxContextInput,
 } from "./tools";
 import { recordFileAccess } from "./learn";
+import { shutdownLsp } from "./lsp/lsp-service";
 
 interface MCPRequest {
   jsonrpc: "2.0";
@@ -417,6 +418,14 @@ async function main() {
     terminal: false,
   });
 
+  // Tear down any spawned language servers on signal-driven exit. Stdin EOF is
+  // handled after the loop below; these cover Ctrl-C / kill.
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.once(sig, () => {
+      void shutdownLsp().finally(() => process.exit(0));
+    });
+  }
+
   for await (const line of rl) {
     if (!line.trim()) continue;
 
@@ -442,6 +451,9 @@ async function main() {
       );
     }
   }
+
+  // Stdin closed (client disconnected): stop language servers before exit.
+  await shutdownLsp();
 }
 
 main().catch(console.error);

@@ -25,6 +25,7 @@ describe("readPuntaxConfig — defaults", () => {
     expect(cfg.eventLedger.enabled).toBe(false);
     expect(cfg.precompact.mode).toBe("llm");
     expect(cfg.codeMap.enabled).toBe(false);
+    expect(cfg.lsp.enabled).toBe(false);
     expect(cfg.llmDistillation.enabled).toBe(false);
   });
 
@@ -75,13 +76,30 @@ describe("readPuntaxConfig — env overrides", () => {
         PUNTAX_CONTEXT_ROUTER: "false",
         PUNTAX_EVENT_LEDGER: "1",
         PUNTAX_CODE_MAP: "on",
+        PUNTAX_LSP: "true",
         PUNTAX_LLM_DISTILLATION: "yes",
       },
     );
     expect(cfg.contextRouter.enabled).toBe(false);
     expect(cfg.eventLedger.enabled).toBe(true);
     expect(cfg.codeMap.enabled).toBe(true);
+    expect(cfg.lsp.enabled).toBe(true);
     expect(cfg.llmDistillation.enabled).toBe(true);
+  });
+
+  it("defaults PUNTAX_LSP to off when unset and respects false", () => {
+    expect(readPuntaxConfig({}, {}).lsp.enabled).toBe(false);
+    expect(readPuntaxConfig({}, { PUNTAX_LSP: "off" }).lsp.enabled).toBe(false);
+    expect(
+      readPuntaxConfig({ puntax: { lsp: { enabled: true } } }, {}).lsp.enabled,
+    ).toBe(true);
+    // Env override wins over config block.
+    expect(
+      readPuntaxConfig(
+        { puntax: { lsp: { enabled: true } } },
+        { PUNTAX_LSP: "no" },
+      ).lsp.enabled,
+    ).toBe(false);
   });
 
   it("honors PUNTAX_PRECOMPACT_MODE only for valid values", () => {

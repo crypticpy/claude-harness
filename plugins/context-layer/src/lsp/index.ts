@@ -37,6 +37,7 @@ export {
   commandOnPath,
   getGlobalServerManager,
   resetGlobalServerManager,
+  setGlobalServerManager,
 } from "./server-manager";
 export {
   Position,
@@ -47,3 +48,12 @@ export {
   documentSymbols,
   diagnostics,
 } from "./operations";
+export {
+  lspEnabled,
+  lspDocumentSymbols,
+  lspDefinition,
+  lspReferences,
+  lspHover,
+  lspDiagnostics,
+  shutdownLsp,
+} from "./lsp-service";
