@@ -83,6 +83,18 @@ async function main() {
                 const { readPuntaxConfig } = await loadModule('puntax-config');
                 const puntax = readPuntaxConfig(config, process.env);
 
+                // Deterministic auto-distillation: write high-confidence typed
+                // memory (test_command, failure_pattern) straight from the event
+                // ledger — no LLM, no API key, runs every compaction. Done BEFORE
+                // the reducer, which prunes the ledger after writing its
+                // checkpoint. The nuanced distillation is done in-process by the
+                // main model via the post-compaction SessionStart nudge
+                // (distill-nudge.mjs).
+                if (puntax.eventLedger.enabled) {
+                    const auto = await loadModule('auto-distill');
+                    auto.runAutoDistill(event, { projectDir: process.env.CLAUDE_PROJECT_DIR || null });
+                }
+
                 const reducer = await loadModule('precompact-reducer');
                 const checkpoint = await reducer.runReducer(event, config);
 
@@ -94,9 +106,9 @@ async function main() {
                     await module.runPreCompact(event, config, apiKey);
                 }
 
-                // Threshold-gated typed-memory distillation: only when a session
-                // signal trips a threshold AND PUNTAX_LLM_DISTILLATION is on
-                // (default off). Consumes the checkpoint, not the raw transcript.
+                // External-LLM distillation: opt-in fallback for headless runs
+                // (no interactive model to nudge). Off by default
+                // (PUNTAX_LLM_DISTILLATION), threshold-gated, checkpoint-based.
                 if (puntax.llmDistillation.enabled) {
                     const distill = await loadModule('distill-precompact');
                     await distill.runDistill(event, config, apiKey, { checkpoint });
@@ -154,7 +166,26 @@ async function main() {
                 // SessionStart: git status + project context
                 const module = await loadModule('session-start');
                 const output = await module.injectContext(event, config);
-                if (output) console.log(output);
+
+                const parts = [];
+                if (output) parts.push(output);
+
+                // Post-compaction in-process distillation nudge: when this
+                // SessionStart follows a compaction, inject the deterministic
+                // checkpoint facts + a memory_write instruction so the main
+                // (in-process, cache-warm) model distills durable lessons for
+                // free — no external LLM. Gated on the event ledger substrate.
+                if (event.source === 'compact') {
+                    const { readPuntaxConfig } = await loadModule('puntax-config');
+                    const puntax = readPuntaxConfig(config, process.env);
+                    if (puntax.eventLedger.enabled) {
+                        const nudgeMod = await loadModule('distill-nudge');
+                        const nudge = nudgeMod.buildCompactionNudge(process.env.CLAUDE_PROJECT_DIR || null);
+                        if (nudge) parts.push(nudge);
+                    }
+                }
+
+                if (parts.length) console.log(parts.join('\n\n'));
                 break;
             }
 

@@ -1,0 +1,125 @@
+/**
+ * Deterministic Auto-Distillation (Phase 5 — in-process, zero-cost)
+ *
+ * Derives high-confidence typed memories straight from the event ledger with NO
+ * LLM at all, then writes them via the shared memory store. This is the
+ * "distillation that happens internally for free" path: the facts it extracts
+ * are exactly the cheap, unambiguous ones an external model was previously asked
+ * to produce.
+ *
+ * What it extracts (confidence: observed, provenance.source: event):
+ *   test_command     — distinct test commands actually run this session
+ *   failure_pattern  — files that errored and were never cleanly re-edited
+ *
+ * The open-loop logic mirrors event-reducer.mjs so a file counted as an open
+ * loop in the checkpoint also yields a failure_pattern memory. Dedup is handled
+ * by the content-addressed id in appendMemory, so re-running across compactions
+ * never duplicates.
+ */
+
+import { resolve } from 'node:path';
+import { readEvents } from './event-writer.mjs';
+import { appendMemory, projectIdFor } from './memory-store.mjs';
+
+const MAX_CMD = 200;
+const MAX_MSG = 300;
+const MAX_MEMORIES = 12;
+
+/**
+ * Pure: events → typed-memory inputs. No I/O. `projectId` is precomputed by the
+ * caller so this stays deterministic and unit-testable.
+ *
+ * @param {Array<object>} events  ledger events, oldest-first
+ * @param {string} projectId
+ * @returns {Array<object>} MemoryInput[] ready for appendMemory
+ */
+export function deriveMemories(events, projectId) {
+  const list = Array.isArray(events) ? events : [];
+  const out = [];
+
+  // test_command: distinct commands from test events.
+  const seenCmd = new Set();
+  for (const e of list) {
+    if (!e || e.kind !== 'test') continue;
+    const cmd = typeof e.command === 'string' ? e.command.trim() : '';
+    if (!cmd || seenCmd.has(cmd)) continue;
+    seenCmd.add(cmd);
+    out.push({
+      projectId,
+      kind: 'test_command',
+      scope: 'project',
+      text: cmd.slice(0, MAX_CMD),
+      severity: 'low',
+      confidence: 'observed',
+      provenance: { source: 'event' },
+    });
+  }
+
+  // failure_pattern: files that errored without a later clean edit/write.
+  const fileLastError = new Map();
+  const fileResolved = new Set();
+  for (const e of list) {
+    if (!e || typeof e !== 'object') continue;
+    const files = Array.isArray(e.files) ? e.files : [];
+    if (e.outcome === 'error' || e.kind === 'error') {
+      for (const f of files) {
+        if (typeof f === 'string') fileLastError.set(f, e.summary || 'error');
+      }
+    } else if (e.outcome === 'ok' && (e.kind === 'edit' || e.kind === 'write')) {
+      for (const f of files) if (typeof f === 'string') fileResolved.add(f);
+    }
+  }
+  for (const [f, msg] of fileLastError) {
+    if (fileResolved.has(f)) continue;
+    out.push({
+      projectId,
+      kind: 'failure_pattern',
+      scope: 'file',
+      files: [f],
+      text: `Unresolved error in ${f}: ${String(msg).slice(0, MAX_MSG)}`,
+      severity: 'medium',
+      confidence: 'observed',
+      provenance: { source: 'event' },
+    });
+  }
+
+  return out.slice(0, MAX_MEMORIES);
+}
+
+/**
+ * Read the session's events, derive deterministic memories, and append them.
+ * Fail-open: returns { written, candidates } and never throws to the hook path.
+ *
+ * @param {object} event  the hook event ({ session_id })
+ * @param {object} opts   { projectDir, deps: { readEvents, appendMemory } }
+ */
+export function runAutoDistill(event, opts = {}) {
+  try {
+    const sessionId = event?.session_id;
+    if (!sessionId) return { written: 0, candidates: 0 };
+    const projectDir = opts.projectDir ?? process.env.CLAUDE_PROJECT_DIR ?? null;
+    if (!projectDir) return { written: 0, candidates: 0 };
+
+    const deps = opts.deps || {};
+    const readEv = deps.readEvents || readEvents;
+    const append = deps.appendMemory || appendMemory;
+
+    const events = readEv(projectDir, { sessionId });
+    if (!events.length) return { written: 0, candidates: 0 };
+
+    const projectId = projectIdFor(resolve(projectDir));
+    const candidates = deriveMemories(events, projectId);
+
+    let written = 0;
+    for (const input of candidates) {
+      const res = append(projectDir, input);
+      if (res && res.written) written++;
+    }
+    return { written, candidates: candidates.length };
+  } catch (err) {
+    if (process.env.DEBUG) process.stderr.write('[auto-distill] error: ' + err.message + '\n');
+    return { written: 0, candidates: 0 };
+  }
+}
+
+export default { deriveMemories, runAutoDistill };
