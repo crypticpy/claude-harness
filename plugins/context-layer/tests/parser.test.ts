@@ -158,4 +158,26 @@ describe("parseFile — Python imports + defs still parse", () => {
       false,
     );
   });
+
+  it("reports real line numbers for defs/classes below the first line", () => {
+    const r = py(
+      [
+        "import os", // 1
+        "", // 2
+        "def foo():", // 3
+        "    return 1", // 4
+        "", // 5
+        "@decorator", // 6
+        "def bar():", // 7
+        "    return 2", // 8
+        "", // 9
+        "class Baz:", // 10
+        "    pass", // 11
+      ].join("\n"),
+    );
+    expect(r.functions.find((f) => f.name === "foo")!.line).toBe(3);
+    expect(r.classes.find((c) => c.name === "Baz")!.line).toBe(10);
+    // A decorated def is anchored at its decorator line (so extraction keeps it).
+    expect(r.functions.find((f) => f.name === "bar")!.line).toBe(6);
+  });
 });

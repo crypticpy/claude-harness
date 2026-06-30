@@ -247,6 +247,13 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
 function parsePython(content: string, result: ParseResult, _opts: Required<ParserOptions>): void {
   const lines = content.split('\n');
 
+  // The def/class regexes anchor with ^ + \s*, and \s* bridges blank lines, so
+  // match.index can sit on a blank line above the declaration. Count to the
+  // first non-whitespace char of the match (the @decorator or def/class keyword)
+  // for the real line, matching the TypeScript path.
+  const declLine = (m: RegExpExecArray): number =>
+    content.slice(0, m.index + Math.max(0, m[0].search(/\S/))).split('\n').length;
+
   // Parse imports - handle multiline and various formats
   let i = 0;
   while (i < lines.length) {
@@ -351,7 +358,7 @@ function parsePython(content: string, result: ParseResult, _opts: Required<Parse
   let match: RegExpExecArray | null;
   const funcRegex = /^(?:@(\w+)(?:\([^)]*\))?\n)*\s*(async\s+)?def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*([^:]+))?:/gm;
   while ((match = funcRegex.exec(content)) !== null) {
-    const line = content.slice(0, match.index).split('\n').length;
+    const line = declLine(match);
     const isAsync = !!match[2];
     const params = match[4].split(',').map(p => p.trim().split(':')[0].split('=')[0].trim()).filter(Boolean);
 
@@ -370,7 +377,7 @@ function parsePython(content: string, result: ParseResult, _opts: Required<Parse
   // Parse classes
   const classRegex = /^(?:@(\w+)(?:\([^)]*\))?\n)*\s*class\s+(\w+)(?:\(([^)]*)\))?:/gm;
   while ((match = classRegex.exec(content)) !== null) {
-    const line = content.slice(0, match.index).split('\n').length;
+    const line = declLine(match);
     const bases = match[3]?.split(',').map(b => b.trim()).filter(Boolean);
 
     result.classes.push({
