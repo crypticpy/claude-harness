@@ -112,6 +112,25 @@ function readLedgerEventsForFile(
 // Implementation
 // =============================================================================
 
+/**
+ * Bound a diff to ~max chars while preserving BOTH ends. A diff's tail (later
+ * hunks) is as informative as its head, but head-only truncation drops it. Keep
+ * a head and tail slice on whole-line boundaries with an omission marker between.
+ */
+export function sampleDiff(diff: string, max = 2000): string {
+  if (diff.length <= max) return diff;
+  const headBudget = Math.ceil(max * 0.6);
+  const tailBudget = max - headBudget;
+  let head = diff.slice(0, headBudget);
+  const lastNl = head.lastIndexOf("\n");
+  if (lastNl > 0) head = head.slice(0, lastNl);
+  let tail = diff.slice(diff.length - tailBudget);
+  const firstNl = tail.indexOf("\n");
+  if (firstNl >= 0) tail = tail.slice(firstNl + 1);
+  const omitted = diff.length - head.length - tail.length;
+  return `${head}\n... (${omitted} chars omitted in the middle) ...\n${tail}`;
+}
+
 export async function whatChanged(
   input: WhatChangedInput,
 ): Promise<ChangeInfo> {
@@ -141,11 +160,8 @@ export async function whatChanged(
 
     if (uncommittedDiff) {
       result.hasUncommittedChanges = true;
-      // Truncate long diffs
-      result.uncommittedDiff =
-        uncommittedDiff.length > 2000
-          ? uncommittedDiff.slice(0, 2000) + "\n... (truncated)"
-          : uncommittedDiff;
+      // Bound long diffs, keeping both the head and tail hunks.
+      result.uncommittedDiff = sampleDiff(uncommittedDiff);
     }
 
     // Check staged changes too
@@ -157,10 +173,7 @@ export async function whatChanged(
 
     if (stagedDiff && !result.uncommittedDiff) {
       result.hasUncommittedChanges = true;
-      result.uncommittedDiff =
-        stagedDiff.length > 2000
-          ? stagedDiff.slice(0, 2000) + "\n... (truncated)"
-          : stagedDiff;
+      result.uncommittedDiff = sampleDiff(stagedDiff);
     }
   } catch {
     // No uncommitted changes or not in git

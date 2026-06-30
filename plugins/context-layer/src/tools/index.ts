@@ -9,6 +9,7 @@ export {
   getChunkRef,
   cacheChunk,
   extractChunk,
+  extractChunksBatch,
   extractAndCacheChunk,
   getOrExtractChunk,
   invalidateChunk,
@@ -24,6 +25,7 @@ export {
   type ChunkRefResult,
   type CacheChunkInput,
   type SymbolLocation,
+  type BatchChunk,
 } from "./chunk-ref";
 
 export {

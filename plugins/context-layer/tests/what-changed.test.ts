@@ -2,7 +2,25 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { whatChanged } from "../src/tools/what-changed";
+import { whatChanged, sampleDiff } from "../src/tools/what-changed";
+
+describe("sampleDiff — middle sampling preserves both ends", () => {
+  it("returns the diff unchanged when within budget", () => {
+    const small = "line1\nline2\nline3";
+    expect(sampleDiff(small, 2000)).toBe(small);
+  });
+
+  it("keeps head and tail with an omission marker when over budget", () => {
+    const head = "HEAD_MARKER_START\n" + "a\n".repeat(400);
+    const tail = "z\n".repeat(400) + "TAIL_MARKER_END";
+    const big = head + tail;
+    const out = sampleDiff(big, 400);
+    expect(out).toContain("HEAD_MARKER_START"); // head survived
+    expect(out).toContain("TAIL_MARKER_END"); // tail survived (head-only trunc would lose it)
+    expect(out).toContain("omitted in the middle");
+    expect(out.length).toBeLessThan(big.length);
+  });
+});
 
 let projectDir: string;
 const saved = {

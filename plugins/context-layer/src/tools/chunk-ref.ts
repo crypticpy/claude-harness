@@ -238,6 +238,62 @@ export async function extractChunk(
   return chunkLines.join('\n');
 }
 
+export interface BatchChunk {
+  symbolName: string;
+  content: string | null; // null when the symbol isn't found
+  found: boolean;
+}
+
+/**
+ * Extract several symbols from ONE file with a single read + parse, instead of
+ * re-reading and re-parsing the file once per symbol. Order-preserving; repeated
+ * names are resolved once. Symbols missing from the parse fall back to the same
+ * regex extractor over the already-read content (still no extra read).
+ */
+export async function extractChunksBatch(
+  filePath: string,
+  symbolNames: string[],
+): Promise<BatchChunk[]> {
+  const content = await readFileSafely(filePath);
+  if (!content) {
+    return symbolNames.map((symbolName) => ({
+      symbolName,
+      content: null,
+      found: false,
+    }));
+  }
+
+  const lines = content.split('\n');
+  const parsed = parseFile(content, filePath);
+  const parseUnusable =
+    parsed.errors.length > 0 &&
+    parsed.functions.length === 0 &&
+    parsed.classes.length === 0;
+  const byName = new Map<string, SymbolLocation>();
+  if (!parseUnusable) {
+    for (const loc of getSymbolLocations(parsed, lines)) {
+      if (!byName.has(loc.name)) byName.set(loc.name, loc);
+    }
+  }
+
+  const resolved = new Map<string, string | null>();
+  for (const name of symbolNames) {
+    if (resolved.has(name)) continue; // resolve each distinct name once
+    const loc = byName.get(name);
+    resolved.set(
+      name,
+      loc
+        ? lines.slice(loc.startLine - 1, loc.endLine).join('\n')
+        : extractChunkFallback(content, name, filePath),
+    );
+  }
+
+  return symbolNames.map((symbolName) => {
+    const c = resolved.get(symbolName) ?? null;
+    return { symbolName, content: c, found: c !== null };
+  });
+}
+
 /**
  * Fallback extraction using regex patterns when parser fails.
  */

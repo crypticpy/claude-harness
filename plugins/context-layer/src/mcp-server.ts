@@ -13,6 +13,7 @@ import {
   getSymbolContext,
   getChunkRef,
   extractAndCacheChunk,
+  extractChunksBatch,
   brainSearch,
   mistakeLog,
   sessionSummary,
@@ -160,6 +161,13 @@ const TOOLS = [
           type: "string",
           description: "Alternative: symbol name to extract as chunk",
         },
+        symbolNames: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Batch: with filePath, extract many symbols in one read+parse. " +
+            "Returns { filePath, chunks: [{ symbolName, content, found }] }.",
+        },
         startLine: {
           type: "number",
           description: "Alternative: start line for range-based chunk",
@@ -272,7 +280,19 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
           }
 
           case "chunk_ref": {
-            if (args.chunkId) {
+            if (
+              args.filePath &&
+              Array.isArray(args.symbolNames) &&
+              args.symbolNames.length > 0
+            ) {
+              // Batch: one read + parse for many symbols in the same file.
+              const filePath = args.filePath as string;
+              recordFileAccess(projectDir, filePath, "chunk_ref");
+              const names = (args.symbolNames as unknown[]).filter(
+                (s): s is string => typeof s === "string",
+              );
+              result = { filePath, chunks: await extractChunksBatch(filePath, names) };
+            } else if (args.chunkId) {
               const input: ChunkRefInput = {
                 chunkId: args.chunkId as string,
                 sessionId,
