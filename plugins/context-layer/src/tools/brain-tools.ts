@@ -7,8 +7,8 @@
  * - session_summary: Save session accomplishments as lessons
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from "fs";
+import * as path from "path";
 
 // =============================================================================
 // Types
@@ -45,7 +45,7 @@ interface HotFile {
 }
 
 interface SearchResult {
-  source: 'lesson' | 'file-insight' | 'convention' | 'hot-file';
+  source: "lesson" | "file-insight" | "convention" | "hot-file";
   match: string;
   context: string;
   relevance: number;
@@ -56,7 +56,7 @@ interface SearchResult {
 // =============================================================================
 
 function getBrainDir(projectPath: string): string {
-  return path.join(projectPath, '.claude', 'context-layer');
+  return path.join(projectPath, ".claude", "context-layer");
 }
 
 function ensureBrainDir(projectPath: string): void {
@@ -73,7 +73,7 @@ function ensureBrainDir(projectPath: string): void {
 export interface BrainSearchInput {
   query: string;
   projectPath: string;
-  sources?: ('lessons' | 'file-insights' | 'conventions' | 'hot-files')[];
+  sources?: ("lessons" | "file-insights" | "conventions" | "hot-files")[];
 }
 
 export interface BrainSearchResult {
@@ -82,109 +82,129 @@ export interface BrainSearchResult {
   totalMatches: number;
 }
 
-export async function brainSearch(input: BrainSearchInput): Promise<BrainSearchResult> {
+export async function brainSearch(
+  input: BrainSearchInput,
+): Promise<BrainSearchResult> {
   const { query, projectPath, sources } = input;
   const brainDir = getBrainDir(projectPath);
   const results: SearchResult[] = [];
   const queryLower = query.toLowerCase();
-  const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 2);
+  const queryTerms = queryLower.split(/\s+/).filter((t) => t.length > 2);
 
   // Search lessons
-  if (!sources || sources.includes('lessons')) {
-    const lessonsPath = path.join(brainDir, 'lessons.jsonl');
+  if (!sources || sources.includes("lessons")) {
+    const lessonsPath = path.join(brainDir, "lessons.jsonl");
     if (fs.existsSync(lessonsPath)) {
       try {
-        const lessons = fs.readFileSync(lessonsPath, 'utf-8')
-          .split('\n')
-          .filter(line => line.trim())
-          .map(line => JSON.parse(line) as Lesson);
+        const lessons = fs
+          .readFileSync(lessonsPath, "utf-8")
+          .split("\n")
+          .filter((line) => line.trim())
+          .map((line) => JSON.parse(line) as Lesson);
 
         for (const lesson of lessons) {
-          const text = `${lesson.type} ${lesson.lesson} ${(lesson.files || []).join(' ')}`.toLowerCase();
+          const text =
+            `${lesson.type} ${lesson.lesson} ${(lesson.files || []).join(" ")}`.toLowerCase();
           const relevance = calculateRelevance(text, queryTerms);
           if (relevance > 0) {
             results.push({
-              source: 'lesson',
+              source: "lesson",
               match: lesson.lesson,
               context: `[${lesson.severity}] ${lesson.type}: ${lesson.lesson}`,
               relevance,
             });
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
   // Search file insights
-  if (!sources || sources.includes('file-insights')) {
-    const insightsPath = path.join(brainDir, 'file-insights.json');
+  if (!sources || sources.includes("file-insights")) {
+    const insightsPath = path.join(brainDir, "file-insights.json");
     if (fs.existsSync(insightsPath)) {
       try {
-        const data = JSON.parse(fs.readFileSync(insightsPath, 'utf-8'));
+        const data = JSON.parse(fs.readFileSync(insightsPath, "utf-8"));
         const insights = data.insights as Record<string, FileInsight>;
 
         for (const [filePath, insight] of Object.entries(insights)) {
-          const text = `${filePath} ${insight.role} ${insight.risk} ${insight.notes.join(' ')}`.toLowerCase();
+          const text =
+            `${filePath} ${insight.role} ${insight.risk} ${insight.notes.join(" ")}`.toLowerCase();
           const relevance = calculateRelevance(text, queryTerms);
           if (relevance > 0) {
             results.push({
-              source: 'file-insight',
+              source: "file-insight",
               match: filePath,
               context: `${filePath}: ${insight.role} (risk: ${insight.risk})`,
               relevance,
             });
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
   // Search conventions
-  if (!sources || sources.includes('conventions')) {
-    const conventionsPath = path.join(brainDir, 'conventions.json');
+  if (!sources || sources.includes("conventions")) {
+    const conventionsPath = path.join(brainDir, "conventions.json");
     if (fs.existsSync(conventionsPath)) {
       try {
-        const data = JSON.parse(fs.readFileSync(conventionsPath, 'utf-8'));
-        const patterns = data.patterns as Record<string, { location: string; description: string }>;
+        const data = JSON.parse(fs.readFileSync(conventionsPath, "utf-8"));
+        const patterns = data.patterns as Record<
+          string,
+          { location: string; description: string }
+        >;
 
         for (const [name, pattern] of Object.entries(patterns)) {
-          const text = `${name} ${pattern.location} ${pattern.description}`.toLowerCase();
+          const text =
+            `${name} ${pattern.location} ${pattern.description}`.toLowerCase();
           const relevance = calculateRelevance(text, queryTerms);
           if (relevance > 0) {
             results.push({
-              source: 'convention',
+              source: "convention",
               match: name,
               context: `${name}: ${pattern.description} (${pattern.location})`,
               relevance,
             });
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
   // Search hot files
-  if (!sources || sources.includes('hot-files')) {
-    const hotFilesPath = path.join(brainDir, 'hot-files.json');
+  if (!sources || sources.includes("hot-files")) {
+    const hotFilesPath = path.join(brainDir, "hot-files.json");
     if (fs.existsSync(hotFilesPath)) {
       try {
-        const data = JSON.parse(fs.readFileSync(hotFilesPath, 'utf-8'));
+        const data = JSON.parse(fs.readFileSync(hotFilesPath, "utf-8"));
         const hotFiles = data.hotFiles as HotFile[];
 
         for (const hf of hotFiles) {
           const intel = hf.intelligence;
-          const text = `${hf.path} ${hf.reason} ${intel?.summary || ''} ${intel?.exports?.join(' ') || ''}`.toLowerCase();
+          const text =
+            `${hf.path} ${hf.reason} ${intel?.summary || ""} ${intel?.exports?.join(" ") || ""}`.toLowerCase();
           const relevance = calculateRelevance(text, queryTerms);
           if (relevance > 0) {
             results.push({
-              source: 'hot-file',
+              source: "hot-file",
               match: hf.path,
-              context: intel?.summary ? `${hf.path}: ${intel.summary.split('\n')[0]}` : `${hf.path}: ${hf.reason}`,
+              context: intel?.summary
+                ? `${hf.path}: ${intel.summary.split("\n")[0]}`
+                : `${hf.path}: ${hf.reason}`,
               relevance,
             });
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -219,7 +239,7 @@ function calculateRelevance(text: string, queryTerms: string[]): number {
 export interface MistakeLogInput {
   mistake: string;
   projectPath: string;
-  severity?: 'low' | 'medium' | 'high';
+  severity?: "low" | "medium" | "high";
   files?: string[];
 }
 
@@ -228,27 +248,29 @@ export interface MistakeLogResult {
   lessonCount: number;
 }
 
-export async function mistakeLog(input: MistakeLogInput): Promise<MistakeLogResult> {
-  const { mistake, projectPath, severity = 'medium', files = [] } = input;
+export async function mistakeLog(
+  input: MistakeLogInput,
+): Promise<MistakeLogResult> {
+  const { mistake, projectPath, severity = "medium", files = [] } = input;
   const brainDir = getBrainDir(projectPath);
   ensureBrainDir(projectPath);
 
-  const lessonsPath = path.join(brainDir, 'lessons.jsonl');
+  const lessonsPath = path.join(brainDir, "lessons.jsonl");
 
   const lesson: Lesson = {
     timestamp: new Date().toISOString(),
-    type: 'mistake',
+    type: "mistake",
     lesson: `DON'T: ${mistake}`,
     severity,
     files,
   };
 
   try {
-    fs.appendFileSync(lessonsPath, JSON.stringify(lesson) + '\n');
+    fs.appendFileSync(lessonsPath, JSON.stringify(lesson) + "\n");
 
     // Count total lessons
-    const content = fs.readFileSync(lessonsPath, 'utf-8');
-    const lessonCount = content.split('\n').filter(l => l.trim()).length;
+    const content = fs.readFileSync(lessonsPath, "utf-8");
+    const lessonCount = content.split("\n").filter((l) => l.trim()).length;
 
     return { logged: true, lessonCount };
   } catch {
@@ -272,35 +294,42 @@ export interface SessionSummaryResult {
   lessonsAdded: number;
 }
 
-export async function sessionSummary(input: SessionSummaryInput): Promise<SessionSummaryResult> {
-  const { summary, projectPath, accomplishments: _accomplishments = [], lessonsLearned = [] } = input;
+export async function sessionSummary(
+  input: SessionSummaryInput,
+): Promise<SessionSummaryResult> {
+  const {
+    summary,
+    projectPath,
+    accomplishments: _accomplishments = [],
+    lessonsLearned = [],
+  } = input;
   // Note: accomplishments are included in summary text, individual lessons come from lessonsLearned
   const brainDir = getBrainDir(projectPath);
   ensureBrainDir(projectPath);
 
-  const lessonsPath = path.join(brainDir, 'lessons.jsonl');
+  const lessonsPath = path.join(brainDir, "lessons.jsonl");
   let lessonsAdded = 0;
 
   try {
     // Add main summary as a lesson
     const mainLesson: Lesson = {
       timestamp: new Date().toISOString(),
-      type: 'session-summary',
+      type: "session-summary",
       lesson: summary,
-      severity: 'medium',
+      severity: "medium",
     };
-    fs.appendFileSync(lessonsPath, JSON.stringify(mainLesson) + '\n');
+    fs.appendFileSync(lessonsPath, JSON.stringify(mainLesson) + "\n");
     lessonsAdded++;
 
     // Add individual lessons learned
     for (const lesson of lessonsLearned) {
       const lessonEntry: Lesson = {
         timestamp: new Date().toISOString(),
-        type: 'discovery',
+        type: "discovery",
         lesson,
-        severity: 'medium',
+        severity: "medium",
       };
-      fs.appendFileSync(lessonsPath, JSON.stringify(lessonEntry) + '\n');
+      fs.appendFileSync(lessonsPath, JSON.stringify(lessonEntry) + "\n");
       lessonsAdded++;
     }
 
@@ -316,82 +345,91 @@ export async function sessionSummary(input: SessionSummaryInput): Promise<Sessio
 
 export const brainToolDefinitions = [
   {
-    name: 'brain_search',
-    description: 'Search your persistent brain for lessons, file insights, conventions, and hot files. Use this to recall what you learned in previous sessions.',
+    name: "brain_search",
+    description:
+      "Search your persistent brain for lessons, file insights, conventions, and hot files. Use this to recall what you learned in previous sessions.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         query: {
-          type: 'string',
-          description: 'Search query (e.g., "client.py", "authentication", "don\'t forget")',
+          type: "string",
+          description:
+            'Search query (e.g., "client.py", "authentication", "don\'t forget")',
         },
         projectDir: {
-          type: 'string',
-          description: 'Project root directory (defaults to cwd)',
+          type: "string",
+          description: "Project root directory (defaults to cwd)",
         },
         sources: {
-          type: 'array',
-          items: { type: 'string', enum: ['lessons', 'file-insights', 'conventions', 'hot-files'] },
-          description: 'Which sources to search (default: all)',
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["lessons", "file-insights", "conventions", "hot-files"],
+          },
+          description: "Which sources to search (default: all)",
         },
       },
-      required: ['query'],
+      required: ["query"],
     },
   },
   {
-    name: 'mistake_log',
-    description: 'Log a mistake you made so you remember not to do it again. Creates a "DON\'T" lesson in your brain.',
+    name: "mistake_log",
+    description:
+      'Log a mistake you made so you remember not to do it again. Creates a "DON\'T" lesson in your brain.',
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         mistake: {
-          type: 'string',
-          description: 'What you did wrong (e.g., "forgot to check file exists before editing")',
+          type: "string",
+          description:
+            'What you did wrong (e.g., "forgot to check file exists before editing")',
         },
         projectDir: {
-          type: 'string',
-          description: 'Project root directory (defaults to cwd)',
+          type: "string",
+          description: "Project root directory (defaults to cwd)",
         },
         severity: {
-          type: 'string',
-          enum: ['low', 'medium', 'high'],
-          description: 'How bad was it? (default: medium)',
+          type: "string",
+          enum: ["low", "medium", "high"],
+          description: "How bad was it? (default: medium)",
         },
         files: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Related files',
+          type: "array",
+          items: { type: "string" },
+          description: "Related files",
         },
       },
-      required: ['mistake'],
+      required: ["mistake"],
     },
   },
   {
-    name: 'session_summary',
-    description: 'Save a summary of what you accomplished in this session. Creates lessons for future reference.',
+    name: "session_summary",
+    description:
+      "Save a summary of what you accomplished in this session. Creates lessons for future reference.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
         summary: {
-          type: 'string',
-          description: 'What was accomplished (e.g., "Built auto-learn system with intelligence caching")',
+          type: "string",
+          description:
+            'What was accomplished (e.g., "Built auto-learn system with intelligence caching")',
         },
         projectDir: {
-          type: 'string',
-          description: 'Project root directory (defaults to cwd)',
+          type: "string",
+          description: "Project root directory (defaults to cwd)",
         },
         accomplishments: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'List of specific things completed',
+          type: "array",
+          items: { type: "string" },
+          description: "List of specific things completed",
         },
         lessonsLearned: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Lessons discovered during the session',
+          type: "array",
+          items: { type: "string" },
+          description: "Lessons discovered during the session",
         },
       },
-      required: ['summary'],
+      required: ["summary"],
     },
   },
 ];
