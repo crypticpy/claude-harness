@@ -153,6 +153,28 @@ function handle(msg) {
   }
 
   if (method === "shutdown") {
+    // Emit an observable sentinel BEFORE replying so a test can confirm the
+    // client actually sent shutdown (the graceful path) rather than only
+    // force-killing us. Ordering is preserved on the pipe, so the client
+    // processes this notification before the shutdown reply resolves.
+    send({
+      jsonrpc: "2.0",
+      method: "textDocument/publishDiagnostics",
+      params: {
+        uri: "file:///__shutdown__",
+        diagnostics: [
+          {
+            range: {
+              start: { line: 0, character: 0 },
+              end: { line: 0, character: 0 },
+            },
+            severity: 1,
+            message: "shutdown-received",
+            source: "mock",
+          },
+        ],
+      },
+    });
     respond(id, null);
     return;
   }

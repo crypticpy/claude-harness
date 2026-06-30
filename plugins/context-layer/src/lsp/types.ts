@@ -98,6 +98,9 @@ export const EXTENSION_TO_LANGUAGE: Record<string, LanguageId> = {
 };
 
 export function getLanguageFromPath(filePath: string): LanguageId {
-  const ext = filePath.slice(filePath.lastIndexOf('.'));
+  // Guard the no-dot case: lastIndexOf('.') === -1 would make slice(-1) return
+  // the final character (e.g. "Makefile" -> "e") instead of an empty extension.
+  const dot = filePath.lastIndexOf('.');
+  const ext = dot >= 0 ? filePath.slice(dot) : '';
   return EXTENSION_TO_LANGUAGE[ext] || 'unknown';
 }

@@ -73,6 +73,10 @@ export class LspClient implements ILspClient {
   private nextId = 1;
   private started = false;
   private stopped = false;
+  // True only during the graceful-shutdown window: the shutdown/exit requests
+  // must still pass the `!this.stopped` guard in request()/notify(), so we keep
+  // `stopped` false until the handshake finishes and gate re-entrancy on this.
+  private stopping = false;
   private readonly openDocs = new Set<string>();
   private readonly docVersions = new Map<string, number>();
 
@@ -275,14 +279,18 @@ export class LspClient implements ILspClient {
 
   /** Best-effort graceful shutdown, then force-kill. */
   async stop(): Promise<void> {
-    if (this.stopped) return;
-    this.stopped = true;
+    if (this.stopped || this.stopping) return;
+    // Keep `stopped` false through the handshake — request()/notify() reject when
+    // stopped is set, so flipping it first (the old bug) made `shutdown`/`exit`
+    // never reach the server, leaving only the force-kill below.
+    this.stopping = true;
     try {
       await this.request("shutdown", null, 2000);
       this.notify("exit", null);
     } catch {
       // ignore — we kill below regardless
     } finally {
+      this.stopped = true;
       this.failAll("language server stopped");
       try {
         this.proc?.kill();

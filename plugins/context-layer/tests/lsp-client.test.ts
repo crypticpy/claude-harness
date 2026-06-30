@@ -75,6 +75,20 @@ describe("LspClient against a mock server", () => {
     expect(res).toMatchObject({ contents: { value: "mock hover text" } });
   });
 
+  it("sends a graceful shutdown to the server before killing it", async () => {
+    // Regression: stop() used to set `stopped` before calling request("shutdown"),
+    // so the request rejected immediately and the server was only force-killed.
+    // The mock emits a sentinel diagnostic when it receives shutdown.
+    let shutdownSeen = false;
+    client = makeClient((uri) => {
+      if (uri === "file:///__shutdown__") shutdownSeen = true;
+    });
+    await client.start();
+    await client.stop();
+    expect(shutdownSeen).toBe(true);
+    client = null; // already stopped; skip the afterEach double-stop
+  });
+
   it("rejects in-flight requests when the server exits", async () => {
     client = makeClient();
     await client.start();
