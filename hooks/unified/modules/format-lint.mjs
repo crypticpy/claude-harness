@@ -14,7 +14,7 @@
  *   native diagnostics rather than being duplicated here.
  */
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { existsSync } from 'fs';
 import { extname, join, relative } from 'path';
 
@@ -103,13 +103,18 @@ export function lintFile(event, config, opts = {}) {
             return null;
         }
 
+        // Run with an argv array (no shell), so the file path is always a single
+        // literal argument — a path with spaces, quotes, `$`, or `;` can never be
+        // re-parsed or injected. spec.cmd holds only static, whitespace-separated
+        // tokens (e.g. `npx --no-install eslint --format unix`); the file goes last.
+        const [bin, ...cmdArgs] = spec.cmd.trim().split(/\s+/);
+        if (!bin) return null;
         let out = '';
         try {
-            out = execSync(`${spec.cmd} "${filePath}"`, {
+            out = execFileSync(bin, [...cmdArgs, filePath], {
                 cwd,
                 encoding: 'utf-8',
                 timeout: config.linting.timeoutMs || 10000,
-                shell: '/bin/bash',
                 stdio: ['ignore', 'pipe', 'pipe'],
             });
         } catch (e) {

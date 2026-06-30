@@ -122,4 +122,35 @@ describe("lintFile — gating + read-only run", () => {
     expect(report).toContain("fake unused");
     expect(report).toContain("not auto-fixed");
   });
+
+  it("passes the file path as a literal arg (no shell expansion/injection)", () => {
+    fs.writeFileSync(path.join(dir, ".eslintrc.json"), "{}\n");
+    // Fake linter echoes back the exact path it received as a diagnostic line.
+    fs.writeFileSync(path.join(dir, "echo-path.sh"), 'echo "$1:9:9: seen [x]"\n');
+    // Filename with shell-significant chars: a space and a $VAR a shell would expand.
+    const f = path.join(dir, "weird $name.ts");
+    fs.writeFileSync(f, "const x = 1;\n");
+
+    const report = lintFile(
+      evt(f),
+      {
+        linting: {
+          enabled: true,
+          maxIssues: 20,
+          linters: [
+            {
+              name: "fake",
+              exts: [".ts"],
+              cmd: "bash echo-path.sh",
+              requires: [".eslintrc.json"],
+            },
+          ],
+        },
+      },
+      { projectDir: dir },
+    );
+
+    // The literal filename survives — under a shell, $name would expand to "".
+    expect(report).toContain("weird $name.ts");
+  });
 });
