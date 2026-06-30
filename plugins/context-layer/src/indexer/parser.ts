@@ -61,7 +61,9 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   while ((match = importRegex.exec(content)) !== null) {
     const line = content.slice(0, match.index).split('\n').length;
     const source = match[7];
-    const isTypeOnly = match[0].includes('import type');
+    // Anchor the `type` keyword: `import typeOf from './x'` is a default import,
+    // not a type-only import, even though it contains the substring "import type".
+    const isTypeOnly = /^import\s+type\s/.test(match[0]);
 
     // Namespace import
     if (match[2]) {

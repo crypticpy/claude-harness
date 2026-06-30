@@ -25,6 +25,21 @@ describe("parseFile — TS export classification (common case preserved)", () =>
     expect(byName.get("Color")).toBe("enum");
   });
 
+  it("marks type-only imports without misreading `import typeOf`", () => {
+    const r = ts(
+      [
+        "import type { Widget } from './w';",
+        "import typeOf from './t';",
+        "import { plain } from './p';",
+      ].join("\n"),
+    );
+    const widget = r.imports.find((i) => i.name === "Widget")!;
+    expect(widget.isTypeOnly).toBe(true);
+    // `typeOf` is a default import; the substring "import type" must not flip it.
+    expect(r.imports.find((i) => i.name === "typeOf")!.isTypeOnly).toBe(false);
+    expect(r.imports.find((i) => i.name === "plain")!.isTypeOnly).toBe(false);
+  });
+
   it("handles named re-export braces", () => {
     const r = ts("const a = 1;\nexport { a as renamed };\n");
     const exp = r.exports.find((e) => e.name === "renamed");
