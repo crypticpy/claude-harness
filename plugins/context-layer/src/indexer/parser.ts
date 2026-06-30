@@ -122,35 +122,38 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
     while ((match = pattern.exec(content)) !== null) {
       const line = content.slice(0, match.index).split('\n').length;
 
-      if (match[0].includes('function')) {
+      // Dispatch on the declaration keyword anchored at the start of the match,
+      // not a naive substring scan — `export const functionList = []` must not be
+      // mistaken for a function export just because the name contains "function".
+      if (/^export\s+(?:default\s+)?(?:async\s+)?function\b/.test(match[0])) {
         result.exports.push({
           name: match[1] || 'default',
           kind: 'function',
           line,
           isReexport: false,
         });
-      } else if (match[0].includes('class')) {
+      } else if (/^export\s+(?:default\s+)?class\b/.test(match[0])) {
         result.exports.push({
           name: match[1],
           kind: 'class',
           line,
           isReexport: false,
         });
-      } else if (match[0].match(/const|let|var/)) {
+      } else if (/^export\s+(?:const|let|var)\b/.test(match[0])) {
         result.exports.push({
           name: match[2],
           kind: match[1] as ExportKind,
           line,
           isReexport: false,
         });
-      } else if (match[0].includes('type') || match[0].includes('interface')) {
+      } else if (/^export\s+(?:type|interface)\b/.test(match[0])) {
         result.exports.push({
           name: match[1],
-          kind: match[0].includes('interface') ? 'interface' : 'type',
+          kind: /^export\s+interface\b/.test(match[0]) ? 'interface' : 'type',
           line,
           isReexport: false,
         });
-      } else if (match[0].includes('enum')) {
+      } else if (/^export\s+enum\b/.test(match[0])) {
         result.exports.push({
           name: match[1],
           kind: 'enum',
@@ -178,9 +181,12 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   const funcRegex = /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s*\*?\s*(\w+)\s*\(([^)]*)\)(?:\s*:\s*([^{]+))?/g;
   while ((match = funcRegex.exec(content)) !== null) {
     const line = content.slice(0, match.index).split('\n').length;
-    const isExported = match[0].includes('export');
-    const isAsync = match[0].includes('async');
-    const isGenerator = match[0].includes('*');
+    // Anchor keywords to the declaration so an identifier/param that merely
+    // contains "export"/"async"/"*" (e.g. `exportData`, `asyncHandler`, a
+    // `2 * 3` default) doesn't flip the flag.
+    const isExported = /(?:^|\n)\s*export\b/.test(match[0]);
+    const isAsync = /\basync\s+function\b/.test(match[0]);
+    const isGenerator = /function\s*\*/.test(match[0]);
     const params = match[2].split(',').map(p => p.trim().split(':')[0].trim()).filter(Boolean);
 
     result.functions.push({
@@ -198,8 +204,8 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   const classRegex = /(?:^|\n)\s*(?:export\s+)?(?:abstract\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+([^{]+))?/g;
   while ((match = classRegex.exec(content)) !== null) {
     const line = content.slice(0, match.index).split('\n').length;
-    const isExported = match[0].includes('export');
-    const isAbstract = match[0].includes('abstract');
+    const isExported = /(?:^|\n)\s*export\b/.test(match[0]);
+    const isAbstract = /\babstract\s+class\b/.test(match[0]);
 
     result.classes.push({
       name: match[1],
@@ -217,7 +223,7 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   const typeRegex = /(?:^|\n)\s*(?:export\s+)?(interface|type)\s+(\w+)(?:\s+extends\s+([^{=]+))?/g;
   while ((match = typeRegex.exec(content)) !== null) {
     const line = content.slice(0, match.index).split('\n').length;
-    const isExported = match[0].includes('export');
+    const isExported = /(?:^|\n)\s*export\b/.test(match[0]);
 
     result.types.push({
       name: match[2],
