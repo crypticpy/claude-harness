@@ -138,6 +138,16 @@ async function main() {
                 } catch (e) {
                     if (process.env.DEBUG) console.error('[impact-hint]', e);
                 }
+
+                // Read-only lint of the edited file: surface issues + nudge the
+                // agent to fix them (incl. pre-existing). Never mutates; silent
+                // in projects without a configured linter.
+                try {
+                    const lintReport = modules[0].lintFile(event, config, { projectDir: event.cwd });
+                    if (lintReport) console.log(lintReport);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[lint]', e);
+                }
                 break;
             }
 

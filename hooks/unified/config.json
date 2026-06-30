@@ -44,6 +44,27 @@
     }
   },
 
+  "linting": {
+    "enabled": true,
+    "comment": "Read-only lint of the edited file (CHECK mode, never --fix). Surfaces issues and nudges the agent to fix them — including pre-existing ones — while the file is open. Bounded to maxIssues lines / timeoutMs. Each linter runs ONLY when its config (`requires`) is present, so projects without that linter stay quiet and rely on the editor's native type diagnostics. eslint MUST use a single-line format (unix/compact) so output is parseable.",
+    "maxIssues": 20,
+    "timeoutMs": 10000,
+    "linters": [
+      {
+        "name": "eslint",
+        "exts": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+        "cmd": "npx --no-install eslint --no-color --format unix",
+        "requires": ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml", ".eslintrc"]
+      },
+      {
+        "name": "ruff",
+        "exts": [".py"],
+        "cmd": "ruff check --no-cache --quiet",
+        "requires": ["ruff.toml", ".ruff.toml", "pyproject.toml"]
+      }
+    ]
+  },
+
   "qualityGates": {
     "onStop": {
       "enabled": true,
