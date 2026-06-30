@@ -45,6 +45,39 @@ describe("brainSearch — typed memories source", () => {
     expect(mem!.context).toContain("global stats file");
   });
 
+  it("skips a corrupt lessons line without dropping the surrounding lessons", async () => {
+    // A crash mid-append can leave one malformed JSONL line. The other lessons
+    // must still be recallable — not silently zeroed by the one bad row.
+    writeBrain(
+      "lessons.jsonl",
+      [
+        JSON.stringify({
+          type: "bug",
+          lesson: "the formatter mangles CRLF newlines on write",
+          severity: "high",
+          files: [],
+        }),
+        "{ this is not valid json",
+        JSON.stringify({
+          type: "bug",
+          lesson: "the formatter also drops a trailing newline",
+          severity: "medium",
+          files: [],
+        }),
+      ].join("\n"),
+    );
+
+    const out = await brainSearch({
+      query: "formatter newline",
+      projectPath: projectDir,
+      sources: ["lessons"],
+    });
+    const lessons = out.results.filter((r) => r.source === "lesson");
+    expect(lessons).toHaveLength(2);
+    expect(lessons.some((l) => l.match.includes("CRLF"))).toBe(true);
+    expect(lessons.some((l) => l.match.includes("trailing newline"))).toBe(true);
+  });
+
   it("skips archived memories and respects an explicit sources filter", async () => {
     writeBrain(
       "memories.jsonl",

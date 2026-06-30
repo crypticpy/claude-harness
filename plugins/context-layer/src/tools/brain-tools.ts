@@ -108,11 +108,21 @@ export async function brainSearch(
     const lessonsPath = path.join(brainDir, "lessons.jsonl");
     if (fs.existsSync(lessonsPath)) {
       try {
+        // Parse per line and skip corrupt rows — a single half-written append
+        // (e.g. a crash mid-flush by the PreCompact lesson writer) must not drop
+        // every other lesson from recall. Mirrors the memories-source handling.
         const lessons = fs
           .readFileSync(lessonsPath, "utf-8")
           .split("\n")
           .filter((line) => line.trim())
-          .map((line) => JSON.parse(line) as Lesson);
+          .map((line) => {
+            try {
+              return JSON.parse(line) as Lesson;
+            } catch {
+              return null;
+            }
+          })
+          .filter((l): l is Lesson => l !== null);
 
         for (const lesson of lessons) {
           const text =
