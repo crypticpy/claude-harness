@@ -14,7 +14,7 @@
  *   native diagnostics rather than being duplicated here.
  */
 
-import { execSync, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { existsSync } from 'fs';
 import { extname, join, relative } from 'path';
 
@@ -29,8 +29,16 @@ export async function formatFile(event, config) {
         const formatter = config.formatting.extensions[ext];
 
         if (formatter) {
+            // Spawn with an argv array (no shell), mirroring lintFile: the file
+            // path is always a single literal argument, so a path containing
+            // `$(...)`, backticks, quotes, or `;` can never be re-parsed by a
+            // shell. formatter holds only static, whitespace-separated tokens
+            // (e.g. `prettier --write`); the file goes last. stdio 'ignore'
+            // discards output (formatting is best-effort and must stay silent).
+            const [bin, ...fmtArgs] = formatter.trim().split(/\s+/);
+            if (!bin) return;
             try {
-                execSync(`${formatter} "${filePath}" 2>/dev/null`, { timeout: 5000 });
+                execFileSync(bin, [...fmtArgs, filePath], { timeout: 5000, stdio: 'ignore' });
             } catch (e) {
                 // Silent failure - formatting is best-effort
             }

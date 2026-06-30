@@ -5,6 +5,7 @@ import * as path from "path";
 import {
   buildLintReport,
   lintFile,
+  formatFile,
 } from "../../../hooks/unified/modules/format-lint.mjs";
 
 describe("buildLintReport", () => {
@@ -152,5 +153,42 @@ describe("lintFile — gating + read-only run", () => {
 
     // The literal filename survives — under a shell, $name would expand to "".
     expect(report).toContain("weird $name.ts");
+  });
+});
+
+describe("formatFile — argv spawn (no shell injection)", () => {
+  let dir: string;
+  const evt = (file: string) => ({ tool_input: { file_path: file } });
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "fmt-"));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("passes the file path as a literal arg — a $(...) payload never executes", async () => {
+    const received = path.join(dir, "received.txt");
+    const pwned = path.join(dir, "PWNED.txt");
+    // Fake formatter records the exact arg it was handed.
+    const cap = path.join(dir, "cap.sh");
+    fs.writeFileSync(cap, `printf '%s' "$1" > '${received}'\n`);
+
+    // A path with a command substitution the OUTER shell would run (it sits
+    // inside the old `"${filePath}"` double-quotes, where $(...) still expands).
+    const malicious = path.join(dir, `x$(touch '${pwned}').ts`);
+
+    const config = { formatting: { enabled: true, extensions: { ".ts": `bash ${cap}` } } };
+    await formatFile(evt(malicious), config);
+
+    // The substitution must NOT have run, and the literal payload must survive.
+    expect(fs.existsSync(pwned)).toBe(false);
+    expect(fs.readFileSync(received, "utf-8")).toContain("$(touch");
+  });
+
+  it("is a no-op when formatting is disabled", async () => {
+    const pwned = path.join(dir, "PWNED.txt");
+    const malicious = path.join(dir, `x$(touch '${pwned}').ts`);
+    const config = { formatting: { enabled: false, extensions: { ".ts": "true" } } };
+    await formatFile(evt(malicious), config);
+    expect(fs.existsSync(pwned)).toBe(false);
   });
 });
