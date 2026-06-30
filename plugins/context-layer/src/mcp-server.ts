@@ -9,6 +9,7 @@ import * as readline from "readline";
 import {
   semanticLookup,
   batchSemanticLookup,
+  formatLookupResult,
   checkImpact,
   getSymbolContext,
   getChunkRef,
@@ -70,6 +71,13 @@ const TOOLS = [
           type: "array",
           items: { type: "string" },
           description: "File paths to look up (relative or absolute)",
+        },
+        outlineOnly: {
+          type: "boolean",
+          description:
+            "Compact outline: file path, line count, complexity, and export/" +
+            "import counts only — drops the prose summary and dependency list. " +
+            "Use to decide whether a file is worth a full read at minimal token cost.",
         },
         projectDir: {
           type: "string",
@@ -194,7 +202,9 @@ const TOOLS = [
   whatChangedToolDefinition,
 ];
 
-async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
+export async function handleRequest(
+  request: MCPRequest,
+): Promise<MCPResponse> {
   const { id, method, params } = request;
 
   try {
@@ -234,6 +244,7 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
         switch (toolName) {
           case "semantic_lookup": {
             const paths = args.paths as string[];
+            const outlineOnly = args.outlineOnly === true;
             // Track file accesses for auto-learn
             for (const p of paths) {
               recordFileAccess(projectDir, p, "semantic_lookup");
@@ -242,8 +253,25 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
               const input: SemanticLookupInput = {
                 filePath: paths[0],
                 projectPath: projectDir,
+                outlineOnly,
               };
-              result = await semanticLookup(input);
+              const lookup = await semanticLookup(input);
+              // outlineOnly returns the compact text outline (the whole point is
+              // minimal tokens); full mode keeps the structured object.
+              result = outlineOnly
+                ? formatLookupResult(lookup, true)
+                : lookup;
+            } else if (outlineOnly) {
+              // Batch outline: one compact block per file, errors noted inline.
+              const batch = await batchSemanticLookup(paths, projectDir);
+              result = paths
+                .map((p) => {
+                  const r = batch.results.get(p);
+                  if (r) return formatLookupResult(r, true);
+                  const err = batch.errors.get(p);
+                  return `${p} — error: ${err ? err.message : "not found"}`;
+                })
+                .join("\n\n");
             } else {
               result = await batchSemanticLookup(paths, projectDir);
             }
@@ -511,4 +539,9 @@ async function main() {
   await shutdownLsp();
 }
 
-main().catch(console.error);
+// Only start the stdio loop when run as the executable entry point (the deploy
+// runs `node dist/mcp-server.js`, compiled to CommonJS). Importing this module —
+// e.g. from a test that drives handleRequest directly — must NOT read stdin.
+if (require.main === module) {
+  main().catch(console.error);
+}

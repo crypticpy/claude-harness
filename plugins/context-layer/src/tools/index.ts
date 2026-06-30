@@ -32,6 +32,7 @@ export {
   // Core functions
   semanticLookup,
   batchSemanticLookup,
+  formatLookupResult,
 
   // MCP handler
   handleSemanticLookup,

@@ -108,6 +108,15 @@ describe("normalizeCommand — output-plumbing canonicalization", () => {
     expect(normalizeCommand("  npx   vitest   run  ")).toBe("npx vitest run");
   });
 
+  it("treats `||` as logical-or, not a pipe to split on", () => {
+    // `||` must survive intact — splitting it forks one command into mangled
+    // near-duplicates that defeat dedup. Spaced and unspaced forms both hold.
+    expect(normalizeCommand("make test || echo fail")).toBe("make test || echo fail");
+    expect(normalizeCommand("a||b")).toBe("a||b");
+    // A real single pipe to an output filter is still stripped after the `||`.
+    expect(normalizeCommand("npm test || exit 1 | tail")).toBe("npm test || exit 1");
+  });
+
   it("handles empty / nullish input", () => {
     expect(normalizeCommand("")).toBe("");
     expect(normalizeCommand(null as any)).toBe("");

@@ -48,7 +48,7 @@ export function normalizeCommand(cmd) {
     .replace(/\s*\d*>&\d*/g, ' ')        // 2>&1, >&2
     .replace(/\s*&>>?\s*\S+/g, ' ')      // &>file, &>>file
     .replace(/\s*\d*>>?\s*\S+/g, ' ');   // 2>file, >file, >>file, 2>/dev/null
-  const parts = s.split(/\s*\|(?!\|)\s*/); // top-level single pipes, not ||
+  const parts = s.split(/\s*(?<!\|)\|(?!\|)\s*/); // single pipes only, never `||`
   if (parts.length > 1) {
     const kept = [parts[0]];
     for (let i = 1; i < parts.length; i++) {
