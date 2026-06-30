@@ -24,6 +24,8 @@ import {
   refreshIndex,
   indexStatusTool,
   memoryWrite,
+  syntaxCheckTool,
+  codeMapOutlineTool,
   brainToolDefinitions,
   whatChangedToolDefinition,
   puntaxContextToolDefinition,
@@ -31,6 +33,8 @@ import {
   refreshIndexToolDefinition,
   indexStatusToolDefinition,
   memoryWriteToolDefinition,
+  syntaxCheckToolDefinition,
+  codeMapOutlineToolDefinition,
   type SemanticLookupInput,
   type ImpactCheckInput,
   type SymbolContextInput,
@@ -195,6 +199,9 @@ const TOOLS = [
   // Code-map index tools
   refreshIndexToolDefinition,
   indexStatusToolDefinition,
+  codeMapOutlineToolDefinition,
+  // Tree-sitter syntax-validity gate
+  syntaxCheckToolDefinition,
   // Typed memory write
   memoryWriteToolDefinition,
   // Brain tools
@@ -427,6 +434,27 @@ export async function handleRequest(
 
           case "index_status": {
             result = await indexStatusTool({ projectPath: projectDir });
+            break;
+          }
+
+          case "syntax_check": {
+            const filePath = args.filePath as string;
+            if (filePath) {
+              recordFileAccess(projectDir, filePath, "syntax_check");
+            }
+            result = await syntaxCheckTool({
+              filePath,
+              content: args.content as string | undefined,
+              projectPath: projectDir,
+            });
+            break;
+          }
+
+          case "code_map_outline": {
+            result = await codeMapOutlineTool({
+              projectPath: projectDir,
+              dir: args.dir as string | undefined,
+            });
             break;
           }
 

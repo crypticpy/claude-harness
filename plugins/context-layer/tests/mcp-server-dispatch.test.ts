@@ -127,3 +127,45 @@ describe("mcp-server dispatch — symbol_context (live wiring)", () => {
     expect(parsed.documentation).toBe("");
   });
 });
+
+describe("mcp-server dispatch — syntax_check (live wiring)", () => {
+  // Guards the schema-entry + handleRequest-case wiring for the new tool (the
+  // "dead at the live boundary" gotcha: green unit tests, missing case).
+  it("flags broken content with a located error through handleRequest", async () => {
+    const res = await handleRequest(
+      call("syntax_check", { filePath: "broken.ts", content: "function f( {\n" }),
+    );
+    const parsed = JSON.parse(textOf(res));
+    expect(parsed.available).toBe(true);
+    expect(parsed.supported).toBe(true);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.errorCount).toBeGreaterThan(0);
+    expect(parsed.errors[0].line).toBeGreaterThanOrEqual(1);
+  });
+
+  it("passes clean content (ok:true) through handleRequest", async () => {
+    const res = await handleRequest(
+      call("syntax_check", { filePath: "ok.ts", content: "export const x = 1;\n" }),
+    );
+    const parsed = JSON.parse(textOf(res));
+    expect(parsed.ok).toBe(true);
+    expect(parsed.errorCount).toBe(0);
+  });
+});
+
+describe("mcp-server dispatch — code_map_outline (live wiring)", () => {
+  it("maps top-level symbols + imports through handleRequest", async () => {
+    const res = await handleRequest(call("code_map_outline", { projectDir }));
+    const parsed = JSON.parse(textOf(res));
+    expect(parsed.indexed).toBe(true);
+    const mod = parsed.files.find(
+      (f: { path: string }) => f.path === "mod.ts",
+    );
+    expect(mod).toBeTruthy();
+    const names = mod.symbols.map((s: { name: string }) => s.name);
+    expect(names).toContain("alpha");
+    expect(names).toContain("beta");
+    // mod.ts imports from 'path' — an external module, so no in-project edge.
+    expect(Array.isArray(mod.imports)).toBe(true);
+  });
+});

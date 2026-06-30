@@ -145,3 +145,23 @@ export {
   type MemoryWriteInput,
   type MemoryWriteResult,
 } from "./memory-write";
+
+export {
+  // Tree-sitter syntax-validity gate
+  syntaxCheckTool,
+  syntaxCheckToolDefinition,
+  // Types
+  type SyntaxCheckInput,
+  type SyntaxCheckToolResult,
+} from "./syntax-check";
+
+export {
+  // Token-cheap structural directory map
+  codeMapOutlineTool,
+  codeMapOutlineToolDefinition,
+  // Types
+  type CodeMapOutlineInput,
+  type CodeMapOutlineResult,
+  type OutlineFile,
+  type OutlineSymbol,
+} from "./code-map-outline";

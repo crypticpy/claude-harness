@@ -10,8 +10,13 @@
  *   extracted  Tree-sitter syntactic extraction
  *   inferred   regex / heuristic fallback
  *
- * The indexer selects the highest-tier AVAILABLE backend that supports a file's
- * language (config `codeMap.backendOrder`), falling back to regex.
+ * NB: `lsp` is a QUERY-TIME tier (symbol_context / impact_check call a language
+ * server on demand) — there is no LSP `IndexBackend`, because `parse()` is
+ * synchronous and LSP is inherently async. The bulk indexer therefore runs only
+ * two backends, in order: tree-sitter (`extracted`) then regex (`inferred`) as
+ * the always-available fallback — see `defaultBackends()` in code-map-service.
+ * Config `codeMap.backendOrder` is documentation only; nothing reads it for
+ * selection (`pickBackend` honors the array order it is handed).
  */
 
 import type { Confidence } from "../../storage/code-map";

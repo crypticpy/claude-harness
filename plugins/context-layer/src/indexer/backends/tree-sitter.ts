@@ -40,6 +40,24 @@ const GRAMMARS: Record<string, string> = {
 };
 
 const SIG_MAX = 240;
+const MAX_SYNTAX_ERRORS = 50;
+
+export interface SyntaxIssue {
+  kind: "error" | "missing";
+  /** The tree-sitter node type at the defect (e.g. "ERROR", ")", "}"). */
+  detail: string;
+  line: number;
+  column: number;
+}
+
+export interface SyntaxCheckResult {
+  language: string;
+  /** False when no grammar covers the language — the check is a no-op then. */
+  supported: boolean;
+  ok: boolean;
+  errorCount: number;
+  errors: SyntaxIssue[];
+}
 
 // ---------------------------------------------------------------------------
 // backend
@@ -85,6 +103,77 @@ export class TreeSitterBackend implements IndexBackend {
     return language === "typescript" || language === "python";
   }
 
+  /**
+   * Pick the loaded grammar for a file, or undefined when no grammar covers the
+   * language (tsx/jsx use the JSX-aware grammar). Only the languages `supports()`
+   * accepts resolve — anything else returns undefined so `checkSyntax` reports a
+   * no-op instead of mis-parsing (e.g. Ruby) as TypeScript.
+   */
+  private grammarFor(
+    language: string,
+    filePath: string,
+  ): Parser.Language | undefined {
+    if (language === "python") return this.languages.get("python");
+    if (language === "typescript") {
+      return /\.(tsx|jsx)$/.test(filePath)
+        ? this.languages.get("tsx")
+        : this.languages.get("typescript");
+    }
+    return undefined;
+  }
+
+  /**
+   * Syntax-validity gate: parse and report ERROR / MISSING nodes. Works for any
+   * loaded grammar. `supported: false` means no grammar covers the file — the
+   * caller treats that as "can't check", not "invalid". Never throws.
+   */
+  checkSyntax(content: string, filePath: string): SyntaxCheckResult {
+    const language = getLanguageFromExtension(
+      path.extname(filePath).toLowerCase(),
+    );
+    const grammar = this.grammarFor(language, filePath);
+    if (!grammar) {
+      return { language, supported: false, ok: true, errorCount: 0, errors: [] };
+    }
+    let tree: Parser.Tree | null = null;
+    try {
+      this.parser.setLanguage(grammar);
+      tree = this.parser.parse(content);
+      const root = tree.rootNode;
+      const errors: SyntaxIssue[] = [];
+      if (root.hasError) {
+        const stack: Node[] = [root];
+        while (stack.length > 0 && errors.length < MAX_SYNTAX_ERRORS) {
+          const n = stack.pop()!;
+          if (n.isError || n.isMissing) {
+            errors.push({
+              kind: n.isMissing ? "missing" : "error",
+              detail: n.type,
+              line: n.startPosition.row + 1,
+              column: n.startPosition.column,
+            });
+          }
+          for (let i = n.childCount - 1; i >= 0; i--) {
+            const c = n.child(i);
+            if (c) stack.push(c);
+          }
+        }
+      }
+      return {
+        language,
+        supported: true,
+        ok: !root.hasError,
+        errorCount: errors.length,
+        errors,
+      };
+    } catch {
+      // Can't determine — fail-open (don't report false syntax errors).
+      return { language, supported: true, ok: true, errorCount: 0, errors: [] };
+    } finally {
+      (tree as { delete?: () => void } | null)?.delete?.();
+    }
+  }
+
   parse(content: string, filePath: string): BackendParseResult {
     const language = getLanguageFromExtension(
       path.extname(filePath).toLowerCase(),
@@ -99,13 +188,7 @@ export class TreeSitterBackend implements IndexBackend {
       errors: [],
     };
 
-    const grammarKey =
-      language === "python"
-        ? "python"
-        : /\.(tsx|jsx)$/.test(filePath)
-          ? "tsx"
-          : "typescript";
-    const grammar = this.languages.get(grammarKey);
+    const grammar = this.grammarFor(language, filePath);
     if (!grammar) return { ...empty, errors: ["tree-sitter: no grammar"] };
 
     let tree: Parser.Tree | null = null;

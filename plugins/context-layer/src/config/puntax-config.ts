@@ -92,6 +92,9 @@ export const DEFAULT_PUNTAX: PuntaxConfig = {
   codeMap: {
     enabled: true,
     dbPath: ".claude/context-layer/code-map.db",
+    // Documentation only — nothing reads this for backend selection. The bulk
+    // indexer runs tree-sitter then regex (defaultBackends); `lsp` is a
+    // query-time tier (symbol_context / impact_check), not an IndexBackend.
     backendOrder: ["lsp", "tree-sitter", "regex"],
   },
   lsp: {
