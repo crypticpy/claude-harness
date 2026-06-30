@@ -531,7 +531,7 @@ async function findSymbolUsagesInFile(
 /**
  * Find usages of a symbol accessed through a namespace import.
  */
-async function findNamespaceSymbolUsages(
+export async function findNamespaceSymbolUsages(
   filePath: string,
   namespaceName: string,
   symbolName: string,
@@ -541,7 +541,14 @@ async function findNamespaceSymbolUsages(
   try {
     const content = fs.readFileSync(filePath, "utf-8");
     const lines = content.split("\n");
-    const pattern = new RegExp(`\\b${namespaceName}\\.${symbolName}\\b`, "g");
+    // Escape both halves — an identifier may carry regex metacharacters (e.g. an
+    // RxJS observable named `data$`), which would otherwise build a broken or
+    // wrong pattern and silently miss every usage. escapeRegex is used the same
+    // way at the symbol-call site below.
+    const pattern = new RegExp(
+      `\\b${escapeRegex(namespaceName)}\\.${escapeRegex(symbolName)}\\b`,
+      "g",
+    );
 
     for (let i = 0; i < lines.length; i++) {
       if (pattern.test(lines[i])) {
