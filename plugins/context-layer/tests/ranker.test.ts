@@ -63,6 +63,22 @@ describe("scoreCandidate", () => {
     expect(small).toBeGreaterThan(large);
   });
 
+  it("applies kindWeight as a direct additive bias (boost and penalty)", () => {
+    const base = scoreCandidate(cand({ text: "hello" }), { now: NOW });
+    const boosted = scoreCandidate(
+      cand({ text: "hello", kindWeight: 2 }),
+      { now: NOW },
+    );
+    const penalized = scoreCandidate(
+      cand({ text: "hello", kindWeight: -0.5 }),
+      { now: NOW },
+    );
+    expect(boosted - base).toBeCloseTo(2);
+    expect(penalized - base).toBeCloseTo(-0.5);
+    // A boosted decision outranks a penalized test_command of equal text.
+    expect(boosted).toBeGreaterThan(penalized);
+  });
+
   it("is pure — no now means zero recency contribution, no throw", () => {
     expect(() => scoreCandidate(cand({ timestamp: NOW }))).not.toThrow();
     const noNow = scoreCandidate(cand({ timestamp: NOW }));

@@ -36,6 +36,13 @@ export interface RankCandidate {
   hotFileScore?: number;
   /** Keyword-overlap score from a brain_search-style scan. */
   keywordScore?: number;
+  /**
+   * Caller-supplied kind bias added directly to the score. Lets the caller
+   * prefer durable knowledge (decisions, failure patterns) over routine
+   * observations (test commands) without the ranker knowing typed-memory kinds.
+   * Positive boosts, negative penalizes. Defaults to 0.
+   */
+  kindWeight?: number;
 }
 
 export interface RankedItem extends RankCandidate {
@@ -129,6 +136,7 @@ export function scoreCandidate(
   const recency = recencyWeight(candidate.timestamp, opts.now, halfLife);
   const hot = Math.min(Math.max(candidate.hotFileScore ?? 0, 0), 3);
   const keyword = candidate.keywordScore ?? 0;
+  const kind = candidate.kindWeight ?? 0;
   const tokenPenalty = tokens / 400;
 
   return (
@@ -138,7 +146,8 @@ export function scoreCandidate(
     conf +
     recency +
     hot +
-    keyword -
+    keyword +
+    kind -
     tokenPenalty
   );
 }

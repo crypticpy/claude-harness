@@ -218,6 +218,24 @@ function riskToSeverity(risk?: string): string | undefined {
 // Candidate construction
 // =============================================================================
 
+// Kind bias for recall ranking: durable, hard-won knowledge (why a decision was
+// made, what keeps breaking) should surface before routine observations (which
+// test command was run). Tunable; unknown kinds are neutral (0).
+const MEMORY_KIND_WEIGHT: Record<string, number> = {
+  decision: 2,
+  failure_pattern: 1.5,
+  gotcha: 1,
+  api_contract: 1,
+  user_preference: 1,
+  convention: 0.5,
+  project_fact: 0.5,
+  test_command: -0.5,
+};
+
+function memoryKindWeight(kind?: string): number {
+  return MEMORY_KIND_WEIGHT[(kind || "").toLowerCase()] ?? 0;
+}
+
 function buildCandidates(
   projectDir: string,
   input: PuntaxContextInput,
@@ -255,6 +273,7 @@ function buildCandidates(
       severity: mem.severity,
       timestamp: mem.createdAt,
       keywordScore: keywordScore(text, terms),
+      kindWeight: memoryKindWeight(mem.kind),
       fileMatch: (mem.files || []).some((f) => fileMatches(f, input.files)),
       symbolMatch: (mem.symbols || []).some((s) =>
         symbols.includes(s.toLowerCase()),

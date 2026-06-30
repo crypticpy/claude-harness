@@ -255,4 +255,44 @@ describe("puntaxContext", () => {
     expect(out.context.split("\n")[0]).toContain("never mutate");
     expect(out.sources[0].kind).toBe("memory");
   });
+
+  it("ranks a durable decision above a routine test_command of equal severity", async () => {
+    // Same severity, recency, and keyword overlap → only the kind bias differs,
+    // so the decision (boosted) must outrank the test_command (penalized).
+    writeBrain(
+      "memories.jsonl",
+      [
+        JSON.stringify({
+          id: "mem_cmd",
+          kind: "test_command",
+          scope: "project",
+          text: "npx vitest run for the parser suite",
+          severity: "medium",
+          createdAt: new Date(NOW).toISOString(),
+          status: "active",
+        }),
+        JSON.stringify({
+          id: "mem_dec",
+          kind: "decision",
+          scope: "project",
+          text: "the parser suite runs under vitest by team decision",
+          severity: "medium",
+          createdAt: new Date(NOW).toISOString(),
+          status: "active",
+        }),
+      ].join("\n"),
+    );
+
+    const out = await puntaxContext(
+      { task: "parser suite vitest", projectDir, mode: "debug" },
+      { config: config(), now: NOW },
+    );
+
+    const lines = out.context.split("\n");
+    const decIdx = lines.findIndex((l) => l.includes("by team decision"));
+    const cmdIdx = lines.findIndex((l) => l.includes("npx vitest run"));
+    expect(decIdx).toBeGreaterThanOrEqual(0);
+    expect(cmdIdx).toBeGreaterThanOrEqual(0);
+    expect(decIdx).toBeLessThan(cmdIdx);
+  });
 });

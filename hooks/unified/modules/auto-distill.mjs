@@ -26,6 +26,41 @@ const MAX_MSG = 300;
 const MAX_MEMORIES = 12;
 const DEFAULT_TTL_DAYS = 90;
 
+// Pipe stages that only shape OUTPUT (pagers/filters), never the test itself.
+// A trailing `| tail`/`| grep` is noise for a test_command memory.
+const OUTPUT_FILTERS = new Set([
+  'tail', 'head', 'less', 'more', 'cat', 'grep', 'egrep', 'fgrep', 'rg', 'ag',
+  'awk', 'sed', 'tee', 'wc', 'sort', 'uniq', 'tr', 'cut', 'fold', 'column', 'jq',
+]);
+
+/**
+ * Canonicalize a shell command so cosmetic output-plumbing doesn't fork one logical
+ * command into many near-duplicate memories. `npx vitest run 2>&1 | tail -30`,
+ * `npx vitest run > out.log`, and `npx vitest run` all collapse to `npx vitest run`.
+ * Drops, in order: fd-dup redirects (`2>&1`), `&>file`, plain/append redirects
+ * (`2>file`, `>file`, `>>file`), then trailing pipe stages into known output
+ * filters. Leaves meaningful (non-filter) pipe stages intact. Pure + deterministic.
+ */
+export function normalizeCommand(cmd) {
+  let s = String(cmd == null ? '' : cmd).trim();
+  if (!s) return '';
+  s = s
+    .replace(/\s*\d*>&\d*/g, ' ')        // 2>&1, >&2
+    .replace(/\s*&>>?\s*\S+/g, ' ')      // &>file, &>>file
+    .replace(/\s*\d*>>?\s*\S+/g, ' ');   // 2>file, >file, >>file, 2>/dev/null
+  const parts = s.split(/\s*\|(?!\|)\s*/); // top-level single pipes, not ||
+  if (parts.length > 1) {
+    const kept = [parts[0]];
+    for (let i = 1; i < parts.length; i++) {
+      const lead = parts[i].trim().split(/\s+/)[0] || '';
+      if (OUTPUT_FILTERS.has(lead)) break; // drop this filter stage and all after
+      kept.push(parts[i]);
+    }
+    s = kept.join(' | ');
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Pure: events → typed-memory inputs. No I/O. `projectId` is precomputed by the
  * caller so this stays deterministic and unit-testable.
@@ -50,11 +85,12 @@ export function deriveMemories(events, projectId, opts = {}) {
       : undefined;
   const ttl = expiresAt ? { expiresAt } : {};
 
-  // test_command: distinct commands from test events.
+  // test_command: distinct commands from test events. Normalize first so
+  // `npx vitest run 2>&1 | tail` and `npx vitest run` dedup to one memory.
   const seenCmd = new Set();
   for (const e of list) {
     if (!e || e.kind !== 'test') continue;
-    const cmd = typeof e.command === 'string' ? e.command.trim() : '';
+    const cmd = normalizeCommand(e.command);
     if (!cmd || seenCmd.has(cmd)) continue;
     seenCmd.add(cmd);
     out.push({

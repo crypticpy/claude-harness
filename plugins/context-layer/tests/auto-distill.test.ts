@@ -6,6 +6,7 @@ import * as path from "path";
 import {
   deriveMemories,
   runAutoDistill,
+  normalizeCommand,
 } from "../../../hooks/unified/modules/auto-distill.mjs";
 import {
   readMemories,
@@ -67,6 +68,22 @@ describe("deriveMemories — pure derivation", () => {
     expect(deriveMemories(null as any, PRJ)).toEqual([]);
   });
 
+  it("collapses output-plumbing variants of one command to a single memory", () => {
+    const out = deriveMemories(
+      [
+        { kind: "test", command: "npx vitest run", outcome: "ok" },
+        { kind: "test", command: "npx vitest run 2>&1 | tail -30", outcome: "error" },
+        { kind: "test", command: "npx vitest run > out.log", outcome: "ok" },
+        { kind: "test", command: "npx vitest run | grep FAIL | head", outcome: "ok" },
+      ],
+      PRJ,
+    );
+    const cmds = out.filter((m) => m.kind === "test_command");
+    // All four are the same logical command after normalization → one memory.
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0].text).toBe("npx vitest run");
+  });
+
   it("adds a TTL (expiresAt) only when a clock is supplied", () => {
     const events = [{ kind: "test", command: "npx vitest run", outcome: "ok" }];
     // Pure call (no clock) → no expiry, so existing tests stay deterministic.
@@ -75,6 +92,26 @@ describe("deriveMemories — pure derivation", () => {
     const now = Date.parse("2026-06-30T00:00:00Z");
     const out = deriveMemories(events, PRJ, { now, ttlDays: 90 });
     expect(out[0].expiresAt).toBe(new Date(now + 90 * 86400000).toISOString());
+  });
+});
+
+describe("normalizeCommand — output-plumbing canonicalization", () => {
+  it("strips redirects and trailing output filters", () => {
+    expect(normalizeCommand("npx vitest run 2>&1 | tail -30")).toBe("npx vitest run");
+    expect(normalizeCommand("pytest -q > out.log")).toBe("pytest -q");
+    expect(normalizeCommand("go test ./... 2>/dev/null")).toBe("go test ./...");
+    expect(normalizeCommand("cargo test | grep -i fail | head")).toBe("cargo test");
+  });
+
+  it("keeps meaningful (non-filter) pipe stages and collapses whitespace", () => {
+    expect(normalizeCommand("foo  |  xargs bar")).toBe("foo | xargs bar");
+    expect(normalizeCommand("  npx   vitest   run  ")).toBe("npx vitest run");
+  });
+
+  it("handles empty / nullish input", () => {
+    expect(normalizeCommand("")).toBe("");
+    expect(normalizeCommand(null as any)).toBe("");
+    expect(normalizeCommand(undefined as any)).toBe("");
   });
 });
 
