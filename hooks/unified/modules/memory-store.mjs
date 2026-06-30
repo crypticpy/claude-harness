@@ -226,12 +226,14 @@ function importanceKey(m) {
  *   3. expired rows (expiresAt <= now)
  *   4. quality junk: rows for which the optional caller-injected `opts.dropJunk`
  *      predicate returns true (e.g. a legacy mis-tagged test_command).
- *   5. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
+ *   5. duplicate-id rows: a cross-process append race can slip the same
+ *      content-addressed id in twice; keep the first occurrence, drop the rest.
+ *   6. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
  *      and higher-severity rows are preferred so durable user knowledge survives.
  * A user-written active row with no expiry is only ever dropped by the cap, which
  * is intentionally high (50) so that rarely fires. Returns { kept, dropped,
  * byReason } where byReason breaks the drops into { corrupt, invalid, nonActive,
- * expired, junk, overCap } for observability.
+ * expired, junk, duplicate, overCap } for observability.
  *
  * (Refinement left for later: "touch" expiresAt on a re-observed duplicate so an
  * actively-used command never ages out — today it self-heals via re-distillation.)
@@ -240,7 +242,7 @@ function importanceKey(m) {
  * @param {{ now?: number, kindCap?: number, dropJunk?: (m:object)=>boolean }} [opts]
  */
 export function pruneMemories(projectDir, opts = {}) {
-  const zero = () => ({ corrupt: 0, invalid: 0, nonActive: 0, expired: 0, junk: 0, overCap: 0 });
+  const zero = () => ({ corrupt: 0, invalid: 0, nonActive: 0, expired: 0, junk: 0, duplicate: 0, overCap: 0 });
   try {
     const file = memoriesPath(projectDir);
     if (!existsSync(file)) return { kept: 0, dropped: 0, byReason: zero() };
@@ -255,6 +257,7 @@ export function pruneMemories(projectDir, opts = {}) {
     const byReason = zero();
     let total = 0;
     const survivors = []; // { m, line } in original order
+    const seenIds = new Set();
     for (const line of readFileSync(file, 'utf-8').split('\n')) {
       if (!line.trim()) continue;
       total++;
@@ -278,6 +281,11 @@ export function pruneMemories(projectDir, opts = {}) {
         try { junk = dropJunk(m) === true; } catch { junk = false; } // a throwing predicate never drops
         if (junk) { byReason.junk++; continue; }
       }
+      // Collapse duplicate ids: appendMemory dedups within a process, but a
+      // cross-process append race (the .mjs hook runtime vs the MCP server) can
+      // slip the same content-addressed id in twice. Keep the first, drop the rest.
+      if (seenIds.has(m.id)) { byReason.duplicate++; continue; }
+      seenIds.add(m.id);
       survivors.push({ m, line });
     }
 

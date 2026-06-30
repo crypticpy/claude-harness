@@ -341,6 +341,7 @@ export interface PruneByReason {
   nonActive: number;
   expired: number;
   junk: number;
+  duplicate: number;
   overCap: number;
 }
 
@@ -361,10 +362,12 @@ export interface PruneMemoriesResult {
  *   3. expired rows (expiresAt <= now)
  *   4. quality junk: rows for which the optional caller-injected `opts.dropJunk`
  *      predicate returns true (e.g. a legacy mis-tagged test_command).
- *   5. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
+ *   5. duplicate-id rows: keep the first occurrence, drop the rest (self-heals a
+ *      cross-process append race that slipped the same id in twice).
+ *   6. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
  *      and higher-severity rows are preferred so durable user knowledge survives.
  * Returns { kept, dropped, byReason } where byReason breaks the drops into
- * { corrupt, invalid, nonActive, expired, junk, overCap } for observability.
+ * { corrupt, invalid, nonActive, expired, junk, duplicate, overCap } for observability.
  */
 export function pruneMemories(
   projectDir: string,
@@ -380,6 +383,7 @@ export function pruneMemories(
     nonActive: 0,
     expired: 0,
     junk: 0,
+    duplicate: 0,
     overCap: 0,
   });
   try {
@@ -393,6 +397,7 @@ export function pruneMemories(
 
     const byReason = zero();
     let total = 0;
+    const seenIds = new Set<string>();
     const survivors: Array<{ m: TypedMemory; line: string }> = [];
     for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
       if (!line.trim()) continue;
@@ -434,6 +439,14 @@ export function pruneMemories(
           continue;
         }
       }
+      // Collapse duplicate ids: appendMemory dedups within a process, but a
+      // cross-process append race (the .mjs hook runtime vs the MCP server) can
+      // slip the same content-addressed id in twice. Keep the first, drop the rest.
+      if (seenIds.has(m.id)) {
+        byReason.duplicate++;
+        continue;
+      }
+      seenIds.add(m.id);
       survivors.push({ m, line });
     }
 

@@ -297,6 +297,7 @@ describe("pruneMemories — retention GC", () => {
       nonActive: 0,
       expired: 0,
       junk: 0,
+      duplicate: 0,
       overCap: 0,
     });
   });
@@ -312,6 +313,20 @@ describe("pruneMemories — retention GC", () => {
     expect(res.byReason.corrupt).toBe(1);
     expect(res.byReason.overCap).toBe(0);
     expect(res.dropped).toBe(3);
+  });
+
+  it("collapses duplicate-id rows from a cross-process append race", () => {
+    // appendMemory dedups within one process, but the .mjs hook runtime and the
+    // MCP server can both land the same content-addressed id. Simulate that by
+    // re-appending the exact persisted line, then assert prune keeps one copy.
+    appendMemory(dir, baseInput({ text: "raced row" }));
+    const line = fs.readFileSync(memoriesPath(dir), "utf-8").trim();
+    fs.appendFileSync(memoriesPath(dir), line + "\n");
+    const res = pruneMemories(dir, { now: NOW });
+    expect(res.byReason.duplicate).toBe(1);
+    expect(res.kept).toBe(1);
+    expect(res.dropped).toBe(1);
+    expect(readMemories(dir).map((m) => m.text)).toEqual(["raced row"]);
   });
 
   it("caps per (kind, scope), preferring user-confirmed + higher severity", () => {
