@@ -3,7 +3,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createTestStorage, type ContextStorage } from "../src/storage";
-import { semanticLookup } from "../src/tools/semantic-lookup";
+import {
+  semanticLookup,
+  formatLookupResult,
+} from "../src/tools/semantic-lookup";
 import { checkImpact } from "../src/tools/impact-check";
 import { getSymbolContext } from "../src/tools/symbol-context";
 import { refreshIndex } from "../src/tools/refresh-index";
@@ -161,6 +164,63 @@ describe("symbol_context index tier", () => {
     expect(ctx!.kind).toBe("class");
     expect(ctx!.location.filePath.endsWith("base.ts")).toBe(true);
     expect(ctx!.related.some((r) => r.name === "Base")).toBe(true);
+  });
+
+  it("signatureOnly trims related + documentation but keeps the signature", async () => {
+    write(
+      "src/base.ts",
+      `export class Base {}\nexport class Widget extends Base {}\n`,
+    );
+    await refreshIndex({ projectPath: projectDir });
+
+    // Full lookup carries the related neighborhood...
+    const full = await getSymbolContext({
+      symbolName: "Widget",
+      projectPath: projectDir,
+    });
+    expect(full!.related.length).toBeGreaterThan(0);
+
+    // ...signatureOnly drops it (shared cache, trimmed copy) but keeps identity.
+    const sig = await getSymbolContext({
+      symbolName: "Widget",
+      projectPath: projectDir,
+      signatureOnly: true,
+    });
+    expect(sig!.kind).toBe("class");
+    expect(sig!.location.filePath.endsWith("base.ts")).toBe(true);
+    expect(sig!.related).toEqual([]);
+    expect(sig!.documentation).toBe("");
+  });
+});
+
+describe("semantic_lookup outline formatting", () => {
+  const result = {
+    filePath: "src/big.ts",
+    summary:
+      "A long prose summary describing the module's purpose in detail across many words.",
+    exports: ["a", "b", "c", "d", "e", "f", "g"],
+    imports: ["x", "y", "z", "w"],
+    lineCount: 420,
+    complexity: "high" as const,
+    lastIndexed: 1_700_000_000_000,
+    needsFullRead: false,
+  };
+
+  it("outlineOnly is compact: counts + first exports, no prose or dep dump", () => {
+    const outline = formatLookupResult(result, true);
+    expect(outline).toContain("src/big.ts");
+    expect(outline).toContain("420 lines");
+    expect(outline).toContain("Exports (7)");
+    expect(outline).toContain("+2 more"); // 7 exports, first 5 shown
+    expect(outline).not.toContain(result.summary); // prose dropped
+    expect(outline).not.toContain("Dependencies"); // dep dump dropped
+    expect(outline.length).toBeLessThan(formatLookupResult(result, false).length);
+  });
+
+  it("full format still includes the summary and dependencies", () => {
+    const full = formatLookupResult(result, false);
+    expect(full).toContain(result.summary);
+    expect(full).toContain("Dependencies (4)");
   });
 });
 

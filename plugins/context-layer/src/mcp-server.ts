@@ -126,6 +126,12 @@ const TOOLS = [
           type: "number",
           description: "Optional: line number where symbol appears",
         },
+        signatureOnly: {
+          type: "boolean",
+          description:
+            "Compact output: name, kind, signature, and location only — no " +
+            "related symbols or documentation.",
+        },
         projectDir: {
           type: "string",
           description: "Project root directory (defaults to cwd)",
@@ -259,6 +265,7 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
               symbolName: args.symbolName as string,
               filePath,
               projectPath: projectDir,
+              signatureOnly: args.signatureOnly === true,
             };
             result = await getSymbolContext(input);
             break;

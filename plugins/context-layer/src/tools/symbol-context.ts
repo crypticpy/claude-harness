@@ -48,6 +48,12 @@ export interface SymbolContextInput {
   symbolName: string;
   filePath?: string;
   projectPath: string;
+  /**
+   * Compact output: return just name, kind, signature, and location — drop the
+   * related-symbols list and documentation. Use when you only need the shape of a
+   * symbol to decide whether it's the one you want, not its full neighborhood.
+   */
+  signatureOnly?: boolean;
 }
 
 export type SymbolKind =
@@ -91,6 +97,18 @@ const FILE_PARSE_CACHE_KEY_PREFIX = "file_parse";
  * and related types.
  */
 export async function getSymbolContext(
+  input: SymbolContextInput,
+): Promise<SymbolContextResult | null> {
+  const result = await resolveSymbolContext(input);
+  // signatureOnly trims AFTER resolution (and after the internal cache read), so
+  // the cache always holds the full result and both modes share one entry.
+  if (result && input.signatureOnly) {
+    return { ...result, related: [], documentation: "" };
+  }
+  return result;
+}
+
+async function resolveSymbolContext(
   input: SymbolContextInput,
 ): Promise<SymbolContextResult | null> {
   const { symbolName, filePath, projectPath } = input;

@@ -31,6 +31,12 @@ import { projectIdFor } from "../storage/code-map";
 export interface SemanticLookupInput {
   filePath: string; // File to look up
   projectPath: string; // Project root for index lookup
+  /**
+   * Compact output: drop the prose summary and the full dependency dump, keeping
+   * just path, line count, complexity, export count + first few names, and import
+   * count. Use when you only need an at-a-glance outline to decide whether to read.
+   */
+  outlineOnly?: boolean;
 }
 
 export interface SemanticLookupResult {
@@ -475,10 +481,11 @@ export async function handleSemanticLookup(
     }
 
     // Perform lookup
-    const result = await semanticLookup({ filePath, projectPath });
+    const outlineOnly = args.outlineOnly === true;
+    const result = await semanticLookup({ filePath, projectPath, outlineOnly });
 
     // Format output
-    const output = formatLookupResult(result);
+    const output = formatLookupResult(result, outlineOnly);
 
     return {
       content: [
@@ -507,7 +514,26 @@ export async function handleSemanticLookup(
 /**
  * Format lookup result as human-readable text.
  */
-function formatLookupResult(result: SemanticLookupResult): string {
+export function formatLookupResult(
+  result: SemanticLookupResult,
+  outlineOnly = false,
+): string {
+  if (outlineOnly) {
+    // At-a-glance outline: counts + first few exports, no prose, no dep dump.
+    const head = result.exports.slice(0, 5).join(", ");
+    const more =
+      result.exports.length > 5 ? ` +${result.exports.length - 5} more` : "";
+    const lines = [
+      `${result.filePath} — ${result.lineCount} lines, ${result.complexity} complexity`,
+      `Exports (${result.exports.length}): ${head || "—"}${more}`,
+      `Imports: ${result.imports.length}`,
+    ];
+    if (result.needsFullRead) {
+      lines.push("(stale index — consider reading full content)");
+    }
+    return lines.join("\n");
+  }
+
   const lines: string[] = [
     `File: ${result.filePath}`,
     `Lines: ${result.lineCount} | Complexity: ${result.complexity}`,
@@ -572,6 +598,12 @@ export const semanticLookupToolDefinition = {
       projectPath: {
         type: "string",
         description: "Absolute path to the project root directory",
+      },
+      outlineOnly: {
+        type: "boolean",
+        description:
+          "Compact output: counts + first few exports only, no prose summary " +
+          "or dependency list. Use to skim before deciding to read.",
       },
     },
     required: ["filePath", "projectPath"],
