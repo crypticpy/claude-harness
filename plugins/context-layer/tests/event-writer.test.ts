@@ -128,6 +128,8 @@ describe("mirrorToolEvent", () => {
     expect(e.kind).toBe("edit");
     expect(e.files).toEqual(["src/app.ts"]);
     expect(e.outcome).toBe("ok");
+    // summary echoes the file path once — not a doubled extension (app.ts.ts)
+    expect(e.summary).toBe("Edit src/app.ts");
   });
 
   it("classifies a test command as a test event", () => {

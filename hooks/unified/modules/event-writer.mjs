@@ -14,7 +14,7 @@
  */
 
 import { appendFileSync, readFileSync, existsSync, writeFileSync } from 'fs';
-import { join, dirname, extname } from 'path';
+import { join, dirname } from 'path';
 import { createHash } from 'crypto';
 import { resolveContextDir, ensureDir } from './storage-paths.mjs';
 
@@ -210,7 +210,7 @@ export function mirrorToolEvent(hookEvent, opts = {}) {
     const denied = PERMISSION_DENIED_RE.test(out);
 
     const summaryBits = [tool_name];
-    if (files.length) summaryBits.push(files[0] + (extname(files[0]) || ''));
+    if (files.length) summaryBits.push(files[0]);
     else if (command) summaryBits.push(command.slice(0, 80));
 
     // Keep the semantic kind (edit/write/read/test/lint/tool_call) and signal
