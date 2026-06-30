@@ -13,7 +13,7 @@
 
 import { createHash } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { contextPaths, ensureDir } from './storage-paths.mjs';
 
 export const MEMORY_KINDS = [
@@ -54,9 +54,14 @@ function sha1(...parts) {
   return createHash('sha1').update(parts.join('\x00')).digest('hex');
 }
 
-/** Deterministic project id from its absolute root path (mirrors code-map.ts). */
+/**
+ * Deterministic project id from its absolute root path (mirrors code-map.ts).
+ * Resolves internally so callers passing a cwd-relative path key the same
+ * project as callers passing an absolute one — otherwise the same memory gets
+ * two ids (projectId feeds memoryId) and dedup silently fails.
+ */
 export function projectIdFor(rootPath) {
-  return 'prj_' + sha1(rootPath).slice(0, 20);
+  return 'prj_' + sha1(resolve(rootPath)).slice(0, 20);
 }
 
 /** Content-addressed memory id (must match the TS memoryId). */

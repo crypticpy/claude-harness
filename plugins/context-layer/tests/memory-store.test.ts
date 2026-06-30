@@ -13,12 +13,14 @@ import {
   type MemoryInput,
 } from "../src/storage/memory-store";
 import { memoryWrite } from "../src/tools/memory-write";
+import { projectIdFor as projectIdForTs } from "../src/storage/code-map";
 
 // Cross-runtime parity: the hook `.mjs` store must compute identical ids so both
 // runtimes share one memories.jsonl.
 import {
   memoryId as memoryIdMjs,
   validateMemory as validateMemoryMjs,
+  projectIdFor as projectIdForMjs,
 } from "../../../hooks/unified/modules/memory-store.mjs";
 
 let dir: string;
@@ -144,6 +146,18 @@ describe("cross-runtime parity (.ts vs .mjs)", () => {
   it("a TS-normalized memory validates under the .mjs validator", () => {
     const m = normalizeMemory(baseInput());
     expect(validateMemoryMjs(m).valid).toBe(true);
+  });
+
+  it("projectIdFor is path-resolution-invariant in both runtimes", () => {
+    // A raw sha1 would differ for these equivalent paths; resolve() collapses
+    // them, so a relative and an absolute caller key the same project.
+    const canonical = projectIdForMjs("/proj/app");
+    expect(projectIdForMjs("/proj/sub/../app")).toBe(canonical);
+    expect(projectIdForTs("/proj/sub/../app")).toBe(canonical);
+  });
+
+  it("projectIdFor matches across runtimes for the same root", () => {
+    expect(projectIdForTs("/x/y/z")).toBe(projectIdForMjs("/x/y/z"));
   });
 });
 

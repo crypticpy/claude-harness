@@ -240,9 +240,15 @@ function sha1(...parts: (string | number)[]): string {
   return crypto.createHash("sha1").update(parts.join("\x00")).digest("hex");
 }
 
-/** Deterministic project id from its absolute root path. */
+/**
+ * Deterministic project id from its absolute root path. Resolves internally so
+ * a relative and an absolute path to the same project key identically — mirrors
+ * memory-store.mjs's projectIdFor (both must agree: memory-write derives its
+ * projectId here, the .mjs distill path derives it there, and they share one
+ * memories.jsonl).
+ */
 export function projectIdFor(rootPath: string): string {
-  return "prj_" + sha1(rootPath).slice(0, 20);
+  return "prj_" + sha1(path.resolve(rootPath)).slice(0, 20);
 }
 
 /** Deterministic file id from project + repo-relative path. */
