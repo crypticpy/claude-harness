@@ -22,9 +22,11 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.0.0",
-    "glob": "^11.0.0",
     "crypto": "^1.0.1",
-    "proper-lockfile": "^4.1.2"
+    "glob": "^11.0.0",
+    "proper-lockfile": "^4.1.2",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.22.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",

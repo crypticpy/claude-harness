@@ -40,6 +40,7 @@ import {
 } from "./tools";
 import { recordFileAccess } from "./learn";
 import { shutdownLsp } from "./lsp/lsp-service";
+import { warmTreeSitter } from "./indexer/backends/tree-sitter";
 
 interface MCPRequest {
   jsonrpc: "2.0";
@@ -495,6 +496,12 @@ export async function handleRequest(
 
 // Main: Read JSON-RPC requests from stdin, write responses to stdout
 async function main() {
+  // Load tree-sitter grammars once so the code-map indexer parses TS/Python
+  // from the real AST (not regex). Fail-open: a load failure leaves the indexer
+  // on RegexBackend. Must run BEFORE createInterface starts reading stdin —
+  // otherwise requests arriving during warmup are dropped by readline.
+  await warmTreeSitter();
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,

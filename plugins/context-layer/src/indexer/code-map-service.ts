@@ -22,6 +22,19 @@ import {
   type IndexProjectOptions,
 } from "./code-indexer";
 import type { IndexBackend } from "./backends/types";
+import { RegexBackend } from "./backends/regex";
+import { readyTreeSitterBackend } from "./backends/tree-sitter";
+
+/**
+ * Backends in tier order: the warmed tree-sitter backend (if grammars loaded)
+ * ahead of regex, which is the always-available fallback. This is what makes
+ * config `backendOrder: ["lsp","tree-sitter","regex"]` resolve a real
+ * tree-sitter tier instead of silently falling through to regex.
+ */
+export function defaultBackends(): IndexBackend[] {
+  const ts = readyTreeSitterBackend();
+  return ts ? [ts, new RegexBackend()] : [new RegexBackend()];
+}
 
 /** True when the code-map index is enabled (config + PUNTAX_CODE_MAP env). */
 export function codeMapEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -91,7 +104,7 @@ export function ensureProjectIndexed(
     }
     return indexProject(cm, projectPathAbs, {
       mode: "full",
-      backends: opts.backends,
+      backends: opts.backends ?? defaultBackends(),
     });
   } catch {
     return null;
@@ -112,7 +125,7 @@ export function refreshFile(
     indexProject(cm, projectPathAbs, {
       mode: "incremental",
       changedFiles: [relPath],
-      backends: opts.backends,
+      backends: opts.backends ?? defaultBackends(),
     });
     return true;
   } catch {
