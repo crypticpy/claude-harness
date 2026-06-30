@@ -4,7 +4,7 @@
  * Quick git diff analysis to see recent changes in a file.
  */
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { loadPuntaxConfig } from "../config/puntax-config";
@@ -150,13 +150,19 @@ export async function whatChanged(
     result.ledgerEvents = ledgerEvents;
   }
 
-  try {
-    // Check for uncommitted changes
-    const uncommittedDiff = execSync(`git diff HEAD -- "${relativePath}"`, {
+  // Run git as argv (no shell) so a path or `since` value can never inject a
+  // command — `relativePath` is attacker-controllable when this tool is driven
+  // by an untrusted caller, and a shell string would let `"; rm -rf"` execute.
+  const git = (argv: string[]): string =>
+    execFileSync("git", argv, {
       cwd: projectPath,
       encoding: "utf-8",
       maxBuffer: 1024 * 1024,
     }).trim();
+
+  try {
+    // Check for uncommitted changes
+    const uncommittedDiff = git(["diff", "HEAD", "--", relativePath]);
 
     if (uncommittedDiff) {
       result.hasUncommittedChanges = true;
@@ -165,11 +171,7 @@ export async function whatChanged(
     }
 
     // Check staged changes too
-    const stagedDiff = execSync(`git diff --cached -- "${relativePath}"`, {
-      cwd: projectPath,
-      encoding: "utf-8",
-      maxBuffer: 1024 * 1024,
-    }).trim();
+    const stagedDiff = git(["diff", "--cached", "--", relativePath]);
 
     if (stagedDiff && !result.uncommittedDiff) {
       result.hasUncommittedChanges = true;
@@ -182,14 +184,21 @@ export async function whatChanged(
   try {
     // Get recent commits for this file
     const logFormat = "--format=%H|%an|%ad|%s";
-    const sinceArg = since.includes("commit")
-      ? `-n ${parseInt(since)}`
-      : `--since="${since}"`;
+    // "N commits" → `-n N`; anything else is a git date spec for `--since`.
+    // Extract the leading integer rather than parseInt(since), which yields NaN
+    // (and a broken `-n NaN`) when the word "commit" carries no number.
+    const sinceArgv: string[] = /commit/.test(since)
+      ? ["-n", since.match(/\d+/)?.[0] ?? "10"]
+      : ["--since", since];
 
-    const log = execSync(
-      `git log ${sinceArg} ${logFormat} --date=short -- "${relativePath}"`,
-      { cwd: projectPath, encoding: "utf-8", maxBuffer: 1024 * 1024 },
-    ).trim();
+    const log = git([
+      "log",
+      ...sinceArgv,
+      logFormat,
+      "--date=short",
+      "--",
+      relativePath,
+    ]);
 
     if (log) {
       result.recentCommits = log
@@ -207,10 +216,14 @@ export async function whatChanged(
     }
 
     // Get total lines changed
-    const stats = execSync(
-      `git log ${sinceArg} --numstat --format="" -- "${relativePath}"`,
-      { cwd: projectPath, encoding: "utf-8", maxBuffer: 1024 * 1024 },
-    ).trim();
+    const stats = git([
+      "log",
+      ...sinceArgv,
+      "--numstat",
+      "--format=",
+      "--",
+      relativePath,
+    ]);
 
     if (stats) {
       let totalLines = 0;

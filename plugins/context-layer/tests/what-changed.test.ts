@@ -1,8 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { whatChanged, sampleDiff } from "../src/tools/what-changed";
+
+/** Initialize a throwaway git repo so the git-history path has something to read. */
+function gitInit(dir: string): void {
+  const run = (argv: string[]) =>
+    execFileSync("git", argv, { cwd: dir, encoding: "utf-8" });
+  run(["init", "-q"]);
+  run(["config", "user.email", "t@example.com"]);
+  run(["config", "user.name", "Test"]);
+  run(["config", "commit.gpgsign", "false"]);
+}
+
+function gitCommit(dir: string, file: string, body: string, message: string): void {
+  fs.writeFileSync(path.join(dir, file), body);
+  execFileSync("git", ["add", file], { cwd: dir });
+  execFileSync("git", ["commit", "-q", "-m", message], { cwd: dir });
+}
 
 describe("sampleDiff — middle sampling preserves both ends", () => {
   it("returns the diff unchanged when within budget", () => {
@@ -109,5 +126,50 @@ describe("whatChanged — event ledger", () => {
     });
     expect(res.ledgerEvents).toBeUndefined();
     expect(res.filePath).toContain("foo.ts");
+  });
+});
+
+describe("whatChanged — git history (argv, no shell injection)", () => {
+  beforeEach(() => {
+    // Isolate the git path; the ledger has its own tests above.
+    process.env.PUNTAX_EVENT_LEDGER = "false";
+  });
+
+  it("returns recent commits and a line count for a tracked file", async () => {
+    gitInit(projectDir);
+    gitCommit(projectDir, "tracked.ts", "export const a = 1;\n", "add tracked");
+
+    const res = await whatChanged({
+      filePath: "tracked.ts",
+      projectPath: projectDir,
+      since: "5 commits",
+    });
+    expect(res.recentCommits.length).toBeGreaterThan(0);
+    expect(res.recentCommits[0].message).toBe("add tracked");
+    expect(res.totalLinesChanged).toBeGreaterThan(0);
+  });
+
+  it("does not execute shell metacharacters embedded in the file path", async () => {
+    gitInit(projectDir);
+    // If git ran through a shell, `; touch PWNED` would fire as a second command
+    // and create the sentinel in cwd (projectDir). execFileSync passes argv with
+    // no shell, so this is just an (absent) pathspec.
+    const evil = 'nope.ts"; touch PWNED; echo "';
+    const res = await whatChanged({ filePath: evil, projectPath: projectDir });
+    expect(fs.existsSync(path.join(projectDir, "PWNED"))).toBe(false);
+    expect(res.hasUncommittedChanges).toBe(false);
+    expect(res.recentCommits).toEqual([]);
+  });
+
+  it('treats a "since" that says commit but carries no number as a sane default', async () => {
+    gitInit(projectDir);
+    gitCommit(projectDir, "x.ts", "1\n", "c1");
+    // Previously "commits" → `-n NaN`, which git rejects and the whole log breaks.
+    const res = await whatChanged({
+      filePath: "x.ts",
+      projectPath: projectDir,
+      since: "commits",
+    });
+    expect(res.recentCommits.length).toBeGreaterThan(0);
   });
 });
