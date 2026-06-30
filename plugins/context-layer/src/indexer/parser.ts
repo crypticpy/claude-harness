@@ -54,6 +54,13 @@ function detectLanguage(ext: string): ParseResult['language'] {
 
 function parseTypeScript(content: string, result: ParseResult, _opts: Required<ParserOptions>): void {
 
+  // Line of a declaration matched with a (?:^|\n) prefix. That prefix captures
+  // the leading newline (and any blank lines via \s*), so match.index sits on a
+  // PRIOR line — counting to it reports the wrong line. Count instead to the
+  // first non-whitespace char of the match (the keyword) for the real line.
+  const declLine = (m: RegExpExecArray): number =>
+    content.slice(0, m.index + Math.max(0, m[0].search(/\S/))).split('\n').length;
+
   // Parse imports
   const importRegex = /^import\s+(?:type\s+)?(?:(\*\s+as\s+(\w+))|(\{[^}]+\})|(\w+))?\s*(?:,\s*(?:(\{[^}]+\})|(\w+)))?\s*from\s+['"]([^'"]+)['"]/gm;
   let match: RegExpExecArray | null;
@@ -182,7 +189,7 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   // Parse functions
   const funcRegex = /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s*\*?\s*(\w+)\s*\(([^)]*)\)(?:\s*:\s*([^{]+))?/g;
   while ((match = funcRegex.exec(content)) !== null) {
-    const line = content.slice(0, match.index).split('\n').length;
+    const line = declLine(match);
     // Anchor keywords to the declaration so an identifier/param that merely
     // contains "export"/"async"/"*" (e.g. `exportData`, `asyncHandler`, a
     // `2 * 3` default) doesn't flip the flag.
@@ -205,7 +212,7 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   // Parse classes
   const classRegex = /(?:^|\n)\s*(?:export\s+)?(?:abstract\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+([^{]+))?/g;
   while ((match = classRegex.exec(content)) !== null) {
-    const line = content.slice(0, match.index).split('\n').length;
+    const line = declLine(match);
     const isExported = /(?:^|\n)\s*export\b/.test(match[0]);
     const isAbstract = /\babstract\s+class\b/.test(match[0]);
 
@@ -224,7 +231,7 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   // Parse interfaces and types
   const typeRegex = /(?:^|\n)\s*(?:export\s+)?(interface|type)\s+(\w+)(?:\s+extends\s+([^{=]+))?/g;
   while ((match = typeRegex.exec(content)) !== null) {
-    const line = content.slice(0, match.index).split('\n').length;
+    const line = declLine(match);
     const isExported = /(?:^|\n)\s*export\b/.test(match[0]);
 
     result.types.push({

@@ -121,6 +121,23 @@ describe("parseFile — TS function/class metadata flags (anchored, not substrin
   });
 });
 
+describe("parseFile — declaration line numbers (off-by-one regression)", () => {
+  it("reports the real line for non-first-line function/class/type decls", () => {
+    const r = ts(
+      [
+        "const a = 1;", // line 1
+        "function foo() {}", // line 2
+        "", // line 3 (blank, previously swallowed by \\s*)
+        "class Bar {}", // line 4
+        "interface Iface {}", // line 5
+      ].join("\n"),
+    );
+    expect(r.functions.find((f) => f.name === "foo")!.line).toBe(2);
+    expect(r.classes.find((c) => c.name === "Bar")!.line).toBe(4);
+    expect(r.types.find((t) => t.name === "Iface")!.line).toBe(5);
+  });
+});
+
 describe("parseFile — Python imports + defs still parse", () => {
   it("captures from-imports, plain imports, and defs", () => {
     const r = py(

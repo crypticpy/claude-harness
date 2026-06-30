@@ -101,6 +101,30 @@ describe("extractChunk — single-symbol extraction (brace + indent block ends)"
     expect(chunk).not.toContain("def bar");
   });
 
+  it("extracts a class that is NOT on line 1 with correct bounds", async () => {
+    // Relies on the parser reporting the class's real line; an off-by-one there
+    // makes the brace scan start on the wrong line and truncates the body.
+    const file = path.join(dir, "mod.ts");
+    fs.writeFileSync(
+      file,
+      [
+        "const header = 1;",
+        "",
+        "export class Widget {",
+        "  id = 0;",
+        "  render() { return this.id; }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const chunk = await extractChunk(file, "Widget");
+    expect(chunk).not.toBeNull();
+    expect(chunk!.startsWith("export class Widget")).toBe(true);
+    expect(chunk).toContain("render()");
+    expect(chunk!.trimEnd().endsWith("}")).toBe(true);
+    expect(chunk).not.toContain("header");
+  });
+
   it("returns null for an unreadable file", async () => {
     const chunk = await extractChunk(path.join(dir, "missing.ts"), "alpha");
     expect(chunk).toBeNull();
