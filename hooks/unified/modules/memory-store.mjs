@@ -224,26 +224,33 @@ function importanceKey(m) {
  *   1. corrupt / schema-invalid lines
  *   2. non-active rows (status in {superseded, expired, rejected})
  *   3. expired rows (expiresAt <= now)
- *   4. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
+ *   4. quality junk: rows for which the optional caller-injected `opts.dropJunk`
+ *      predicate returns true (e.g. a legacy mis-tagged test_command).
+ *   5. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
  *      and higher-severity rows are preferred so durable user knowledge survives.
  * A user-written active row with no expiry is only ever dropped by the cap, which
  * is intentionally high (50) so that rarely fires. Returns { kept, dropped,
  * byReason } where byReason breaks the drops into { corrupt, invalid, nonActive,
- * expired, overCap } for observability.
+ * expired, junk, overCap } for observability.
  *
  * (Refinement left for later: "touch" expiresAt on a re-observed duplicate so an
  * actively-used command never ages out — today it self-heals via re-distillation.)
  *
  * @param {string} projectDir
- * @param {{ now?: number, kindCap?: number }} [opts]
+ * @param {{ now?: number, kindCap?: number, dropJunk?: (m:object)=>boolean }} [opts]
  */
 export function pruneMemories(projectDir, opts = {}) {
-  const zero = () => ({ corrupt: 0, invalid: 0, nonActive: 0, expired: 0, overCap: 0 });
+  const zero = () => ({ corrupt: 0, invalid: 0, nonActive: 0, expired: 0, junk: 0, overCap: 0 });
   try {
     const file = memoriesPath(projectDir);
     if (!existsSync(file)) return { kept: 0, dropped: 0, byReason: zero() };
     const now = typeof opts.now === 'number' ? opts.now : Date.now();
     const kindCap = typeof opts.kindCap === 'number' ? opts.kindCap : DEFAULT_KIND_CAP;
+    // Optional quality filter: drop a surviving row when this returns true. The
+    // store stays classifier-agnostic — the caller injects the predicate (e.g.
+    // "a test_command whose text no longer classifies as a test"), so legacy
+    // mis-tagged rows leave without the store knowing command semantics.
+    const dropJunk = typeof opts.dropJunk === 'function' ? opts.dropJunk : null;
 
     const byReason = zero();
     let total = 0;
@@ -261,6 +268,11 @@ export function pruneMemories(projectDir, opts = {}) {
       if (!validateMemory(m).valid) { byReason.invalid++; continue; } // drop schema-invalid
       if (m.status && m.status !== 'active') { byReason.nonActive++; continue; } // drop non-active
       if (m.expiresAt && Date.parse(m.expiresAt) <= now) { byReason.expired++; continue; } // drop expired
+      if (dropJunk) {
+        let junk = false;
+        try { junk = dropJunk(m) === true; } catch { junk = false; } // a throwing predicate never drops
+        if (junk) { byReason.junk++; continue; }
+      }
       survivors.push({ m, line });
     }
 

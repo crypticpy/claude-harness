@@ -24,6 +24,7 @@ import {
   checkpointsFile,
   pruneEvents,
   pruneCheckpoints,
+  classifyBashCommand,
 } from './event-writer.mjs';
 import { ensureDir } from './storage-paths.mjs';
 import { readPuntaxConfig } from './puntax-config.mjs';
@@ -191,7 +192,17 @@ export async function runReducer(event, config) {
       const retentionDays = puntax.eventLedger.retentionDays;
       pruneEvents(projectDir, retentionDays);
       pruneCheckpoints(projectDir, retentionDays);
-      const pruned = pruneMemories(projectDir);
+      // Quality filter: an older event classifier mis-tagged compound shell
+      // lines (e.g. `cd x && git status`) as test_command. The current
+      // classifier re-checks each row's text; anything that no longer reads as
+      // a test was never a real test command and is dropped. Legit single or
+      // compound test commands (`npx vitest run`, `cd pkg && npm test`) still
+      // classify as 'test' and survive, so this is zero-false-positive.
+      const pruned = pruneMemories(projectDir, {
+        dropJunk: (m) =>
+          m.kind === 'test_command' &&
+          classifyBashCommand(m.text || '') !== 'test',
+      });
       if (process.env.DEBUG && pruned.dropped > 0) {
         process.stderr.write(
           '[memory-store] pruned ' + pruned.dropped + ' rows ' +

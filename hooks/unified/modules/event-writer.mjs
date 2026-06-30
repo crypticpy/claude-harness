@@ -150,7 +150,7 @@ export function readEvents(projectDir, { sessionId, sinceTs } = {}) {
 const TEST_RUNNERS = /^(?:vitest|jest|pytest|mocha|rspec|ava|playwright|phpunit)\b/;
 const LINT_RUNNERS = /^(?:eslint|tsc|prettier|ruff|mypy|flake8|clippy|gofmt|biome)\b/;
 
-function classifyBashCommand(command) {
+export function classifyBashCommand(command) {
   // Inspect each command segment's leading executable so runner names buried in
   // strings or paths don't trigger a (mis)classification.
   const segments = (command || '').toLowerCase().split(/&&|\|\||[;\n|]/);

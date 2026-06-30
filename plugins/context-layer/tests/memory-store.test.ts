@@ -26,6 +26,7 @@ import {
   pruneMemories as pruneMemoriesMjs,
   appendMemories as appendMemoriesMjs,
 } from "../../../hooks/unified/modules/memory-store.mjs";
+import { classifyBashCommand } from "../../../hooks/unified/modules/event-writer.mjs";
 
 let dir: string;
 
@@ -283,6 +284,7 @@ describe("pruneMemories — retention GC", () => {
       invalid: 0,
       nonActive: 0,
       expired: 0,
+      junk: 0,
       overCap: 0,
     });
   });
@@ -323,6 +325,53 @@ describe("pruneMemories — retention GC", () => {
     expect(res.kept).toBe(2);
     const texts = readMemories(dir).map((m) => m.text);
     expect(texts).toContain("important"); // protected by importance
+  });
+
+  it("drops rows flagged by an injected dropJunk predicate, counted as junk", () => {
+    appendMemory(dir, baseInput({ text: "keep me" }));
+    appendMemory(dir, baseInput({ text: "junk me" }));
+    const res = pruneMemories(dir, {
+      now: NOW,
+      dropJunk: (m) => m.text === "junk me",
+    });
+    expect(res.byReason.junk).toBe(1);
+    expect(res.dropped).toBe(1);
+    expect(readMemories(dir).map((m) => m.text)).toEqual(["keep me"]);
+  });
+
+  it("a throwing dropJunk predicate never drops a row (fail-safe)", () => {
+    appendMemory(dir, baseInput({ text: "survivor" }));
+    const res = pruneMemories(dir, {
+      now: NOW,
+      dropJunk: () => {
+        throw new Error("boom");
+      },
+    });
+    expect(res.byReason.junk).toBe(0);
+    expect(res.kept).toBe(1);
+  });
+
+  it("classifier predicate removes legacy mis-tagged test_command rows, keeps real ones", () => {
+    // The exact production predicate: a test_command whose text no longer reads
+    // as a test under the current classifier was never a real test command.
+    const isJunk = (m: { kind: string; text: string }) =>
+      m.kind === "test_command" && classifyBashCommand(m.text) !== "test";
+    appendMemory(
+      dir,
+      baseInput({ kind: "test_command", text: "npx vitest run" }),
+    );
+    appendMemory(
+      dir,
+      baseInput({ kind: "test_command", text: "cd plugins && npm test" }),
+    );
+    appendMemory(
+      dir,
+      baseInput({ kind: "test_command", text: "cd /repo && command git status" }),
+    );
+    const res = pruneMemories(dir, { now: NOW, dropJunk: isJunk });
+    expect(res.byReason.junk).toBe(1); // only the git-status compound
+    const kept = readMemories(dir).map((m) => m.text).sort();
+    expect(kept).toEqual(["cd plugins && npm test", "npx vitest run"]);
   });
 
   it("matches the .mjs runtime row-for-row on the same store", () => {
