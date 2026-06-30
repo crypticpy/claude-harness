@@ -13,6 +13,7 @@ import { refreshIndex } from "../src/tools/refresh-index";
 import { indexStatusTool } from "../src/tools/index-status";
 import { openCodeMap } from "../src/indexer/code-map-service";
 import { projectIdFor } from "../src/storage/code-map";
+import { resetGlobalCache } from "../src/lsp/cache";
 
 let projectDir: string;
 let savedEnv: Record<string, string | undefined>;
@@ -148,6 +149,77 @@ describe("impact_check index-first (file level)", () => {
 });
 
 describe("symbol_context index tier", () => {
+  it("auto-builds the index on first lookup (no explicit refresh)", async () => {
+    write(
+      "src/base.ts",
+      `export class Base {}\nexport class Widget extends Base {}\n`,
+    );
+    // No refreshIndex — the index does not exist yet.
+    const dbPath = path.join(
+      projectDir,
+      ".claude",
+      "context-layer",
+      "code-map.db",
+    );
+    expect(fs.existsSync(dbPath)).toBe(false);
+
+    const ctx = await getSymbolContext({
+      symbolName: "Widget",
+      projectPath: projectDir,
+    });
+
+    expect(ctx).not.toBeNull();
+    expect(ctx!.kind).toBe("class");
+    expect(ctx!.location.filePath.endsWith("base.ts")).toBe(true);
+
+    // The auto-build trigger populated the index from cold: the symbol is now
+    // resolvable straight from code-map without any prior refresh call.
+    const cm = openCodeMap(projectDir)!;
+    expect(
+      cm.getSymbolsByName(projectIdFor(projectDir), "Widget").length,
+    ).toBeGreaterThan(0);
+    cm.close();
+  });
+
+  it("self-warms: re-walks a file edited after the initial auto-build", async () => {
+    const abs = path.join(projectDir, "src/base.ts");
+    const t0 = new Date(1_700_000_000_000);
+    write(
+      "src/base.ts",
+      `export class Base {}\nexport class Widget extends Base {}\n`,
+    );
+    fs.utimesSync(abs, t0, t0);
+
+    // First lookup auto-builds the index at mtime t0.
+    await getSymbolContext({ symbolName: "Widget", projectPath: projectDir });
+
+    // Edit the file (adds Gadget) and bump mtime well past t0 → stale.
+    const t1 = new Date(1_700_000_100_000);
+    write(
+      "src/base.ts",
+      `export class Base {}\nexport class Widget extends Base {}\nexport class Gadget {}\n`,
+    );
+    fs.utimesSync(abs, t1, t1);
+
+    // Drop the in-process result cache so the next lookup actually re-runs the
+    // index tier (the self-warm only matters on a cache miss — i.e. a fresh
+    // session). This lookup sees a stale file: it returns the correct scan
+    // answer AND schedules an incremental re-walk of just base.ts.
+    resetGlobalCache();
+    const ctx = await getSymbolContext({
+      symbolName: "Widget",
+      projectPath: projectDir,
+    });
+    expect(ctx).not.toBeNull();
+
+    // The re-walk ran: the index now carries the newly-added Gadget symbol.
+    const cm = openCodeMap(projectDir)!;
+    expect(
+      cm.getSymbolsByName(projectIdFor(projectDir), "Gadget").length,
+    ).toBeGreaterThan(0);
+    cm.close();
+  });
+
   it("resolves a symbol from the index after a refresh", async () => {
     write(
       "src/base.ts",

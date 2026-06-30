@@ -26,6 +26,8 @@ import {
   projectRoot,
   openCodeMap,
   fileFreshnessByMtime,
+  ensureProjectIndexed,
+  refreshFile,
 } from "../indexer/code-map-service";
 import {
   lspEnabled,
@@ -704,8 +706,19 @@ function symbolContextFromIndex(
 ): SymbolContextResult | null {
   try {
     const root = projectRoot(projectPath);
+    // Auto-build trigger: bootstrap the index once if this project has never
+    // been walked. Without this, a fresh project's empty symbol table drops
+    // every lookup to the slower scan path and the index is never populated
+    // (impact_check force-builds, but symbol_context previously did not). No
+    // `force` — this is a one-time full index, then a fast counts() no-op.
+    ensureProjectIndexed(root);
     const cm = openCodeMap(root);
     if (!cm) return null;
+    let result: SymbolContextResult | null = null;
+    // Defining-file path to incrementally re-walk AFTER cm is closed, so we
+    // never hold a read connection open while refreshFile writes (avoids any
+    // same-process WAL lock contention).
+    let stalePath: string | null = null;
     try {
       const projectId = projectIdFor(root);
       let matches = cm.getSymbolsByName(projectId, symbolName);
@@ -732,23 +745,32 @@ function symbolContextFromIndex(
 
       // Only answer from the index when the defining file is unchanged.
       const fresh = fileFreshnessByMtime(cm, projectId, root, file.path);
-      if (fresh.state !== "fresh") return null;
-
-      const related = relatedFromEdges(cm, sym);
-      return {
-        name: sym.name,
-        kind: mapSymbolKind(sym.kind),
-        signature: sym.signature ?? sym.name,
-        documentation: sym.doc ?? "",
-        location: {
-          filePath: path.join(root, file.path),
-          line: sym.startLine,
-        },
-        related,
-      };
+      if (fresh.state !== "fresh") {
+        // Stale (edited since the last walk): mark it for an incremental
+        // re-walk so the NEXT lookup hits the fast path. This call still
+        // returns null → the caller's scan produces the correct fresh answer.
+        if (fresh.state === "stale") stalePath = file.path;
+      } else {
+        const related = relatedFromEdges(cm, sym);
+        result = {
+          name: sym.name,
+          kind: mapSymbolKind(sym.kind),
+          signature: sym.signature ?? sym.name,
+          documentation: sym.doc ?? "",
+          location: {
+            filePath: path.join(root, file.path),
+            line: sym.startLine,
+          },
+          related,
+        };
+      }
     } finally {
       cm.close();
     }
+
+    // cm is closed — safe to open the write connection refreshFile needs.
+    if (stalePath) refreshFile(root, stalePath);
+    return result;
   } catch {
     return null;
   }
