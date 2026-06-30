@@ -112,6 +112,7 @@ interface TokenStats {
   percent_used: number;
   model: string;
   session_cost_usd: number;
+  session_id?: string;
 }
 
 // =============================================================================
@@ -119,6 +120,15 @@ interface TokenStats {
 // =============================================================================
 
 const TOKEN_STATS_FILE = "/tmp/claude-context-stats.json";
+
+// The stats file is a single GLOBAL /tmp file shared by every session and
+// rewritten by statusline-command.sh on each render. A new session's first
+// UserPromptSubmit (when personality is injected) can fire BEFORE this
+// session's statusline has rendered, so the file may still hold the PREVIOUS
+// session's final token count — which is how a fresh session once reported
+// "238K/256K (93%)". Past this age with no session match, we treat stats as
+// stale rather than trust them.
+const TOKEN_STATS_MAX_AGE_MS = 2 * 60 * 1000; // 2 minutes
 
 // Auto-compact trigger = CLAUDE_CODE_AUTO_COMPACT_WINDOW * 0.80.
 // Empirically Claude Code fires auto-compact near 80% of the window; the
@@ -132,11 +142,41 @@ const COMPACTION_THRESHOLD: number = (() => {
   return Math.floor(window * 0.8);
 })();
 
-function loadTokenStats(): TokenStats | null {
+/**
+ * Decide whether a token-stats snapshot is provably from the current, live
+ * session. Pure (no I/O) so it can be unit-tested with a fixed clock.
+ *
+ * - If both the snapshot and the caller carry a session_id, an exact match is
+ *   authoritative (and a mismatch is rejected outright — this is the guard that
+ *   stops a fresh session inheriting the prior session's token count).
+ * - Otherwise (legacy snapshots written before the statusline stamped a
+ *   session_id) fall back to a wall-clock freshness window.
+ */
+export function isTokenStatsFresh(
+  stats: Pick<TokenStats, "timestamp" | "session_id">,
+  currentSessionId: string | undefined,
+  nowMs: number,
+): boolean {
+  if (stats.session_id && currentSessionId) {
+    return stats.session_id === currentSessionId;
+  }
+  // timestamp is Unix SECONDS (written via `date +%s`); nowMs is milliseconds.
+  if (typeof stats.timestamp !== "number") {
+    return false;
+  }
+  const ageMs = nowMs - stats.timestamp * 1000;
+  return Number.isFinite(ageMs) && ageMs <= TOKEN_STATS_MAX_AGE_MS;
+}
+
+function loadTokenStats(currentSessionId?: string): TokenStats | null {
   try {
     if (fs.existsSync(TOKEN_STATS_FILE)) {
       const content = fs.readFileSync(TOKEN_STATS_FILE, "utf-8");
-      return JSON.parse(content) as TokenStats;
+      const stats = JSON.parse(content) as TokenStats;
+      if (!isTokenStatsFresh(stats, currentSessionId, Date.now())) {
+        return null;
+      }
+      return stats;
     }
   } catch {
     /* ignore */
@@ -175,8 +215,11 @@ function formatTokenAwareness(stats: TokenStats): string {
   return `${statusEmoji} Context: ${stats.current_k}K/${compactionK}K (${percentTowardCompaction}%) | ~${remainingK}K until compaction${warning}`;
 }
 
-function checkAndTriggerPreCompactionSave(projectPath: string): string | null {
-  const stats = loadTokenStats();
+function checkAndTriggerPreCompactionSave(
+  projectPath: string,
+  sessionId?: string,
+): string | null {
+  const stats = loadTokenStats(sessionId);
   // Trigger warning when within 10K of compaction threshold
   const warningThreshold = COMPACTION_THRESHOLD - 10000;
   if (!stats || stats.current_tokens < warningThreshold) {
@@ -441,11 +484,12 @@ function loadPersistentBrain(projectPath: string): PersistentBrain | null {
 function formatBrainContext(
   brain: PersistentBrain,
   projectPath: string,
+  sessionId?: string,
 ): string {
   const lines: string[] = ["<project-personality>"];
 
   // Token awareness - show context usage
-  const tokenStats = loadTokenStats();
+  const tokenStats = loadTokenStats(sessionId);
   if (tokenStats) {
     lines.push(formatTokenAwareness(tokenStats));
     lines.push("");
@@ -692,7 +736,10 @@ export async function handleUserPromptSubmit(
     );
 
     // CHECK: Pre-compaction save trigger
-    const preCompactionWarning = checkAndTriggerPreCompactionSave(projectPath);
+    const preCompactionWarning = checkAndTriggerPreCompactionSave(
+      projectPath,
+      sessionId,
+    );
 
     // PRIORITY 1: Check for persistent brain (Claude's accumulated knowledge)
     const brain = loadPersistentBrain(projectPath);
@@ -700,7 +747,7 @@ export async function handleUserPromptSubmit(
       brain &&
       (brain.lessons.length > 0 || Object.keys(brain.fileInsights).length > 0)
     ) {
-      let context = formatBrainContext(brain, projectPath);
+      let context = formatBrainContext(brain, projectPath, sessionId);
       // Prepend recovery context if we just recovered from compaction
       if (recoveryContext) {
         context = recoveryContext + "\n\n" + context;

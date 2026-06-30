@@ -27,6 +27,10 @@ model=$(echo "$input" | jq -r '.model.display_name // .model.id // "?"')
 context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 transcript_path=$(echo "$input" | jq -r '.transcript_path // ""')
 
+# Session id — stamped into the shared stats file so the personality hook can
+# reject another session's snapshot instead of reporting it as this session's.
+session_id=$(echo "$input" | jq -r '.session_id // ""')
+
 # Compaction threshold = CLAUDE_CODE_AUTO_COMPACT_WINDOW × (effective trigger %).
 # Claude Code's actual auto-compact fires near 80% of WINDOW in practice (the
 # CLAUDE_AUTOCOMPACT_PCT_OVERRIDE env var is documented but unreliable on the
@@ -71,6 +75,7 @@ if [ "$ctx_tokens" -gt 0 ] || [ ! -f "$CONTEXT_FILE" ]; then
 cat > "$CONTEXT_FILE" << EOF
 {
   "timestamp": $(date +%s),
+  "session_id": "$session_id",
   "context_size": $context_size,
   "current_tokens": $ctx_tokens,
   "current_k": $ctx_k,
