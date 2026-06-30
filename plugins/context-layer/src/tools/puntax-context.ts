@@ -119,6 +119,46 @@ function readLessons(dir: string): RawLesson[] {
   }
 }
 
+interface RawMemory {
+  id?: string;
+  kind?: string;
+  scope?: string;
+  text?: string;
+  files?: string[];
+  symbols?: string[];
+  severity?: string;
+  createdAt?: string;
+  status?: string;
+  expiresAt?: string;
+}
+
+// Typed memories (memory_write + auto-distill). Active, non-expired only —
+// mirrors structured-context.mjs's status filter so write and recall agree.
+function readMemories(dir: string, now: number): RawMemory[] {
+  const file = path.join(dir, "memories.jsonl");
+  try {
+    return fs
+      .readFileSync(file, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => {
+        try {
+          return JSON.parse(l) as RawMemory;
+        } catch {
+          return null;
+        }
+      })
+      .filter((m): m is RawMemory => {
+        if (!m || typeof m.text !== "string" || !m.text) return false;
+        if (m.status !== undefined && m.status !== "active") return false;
+        if (m.expiresAt && Date.parse(m.expiresAt) <= now) return false;
+        return true;
+      });
+  } catch {
+    return [];
+  }
+}
+
 // =============================================================================
 // Keyword relevance (mirrors brain-tools calculateRelevance)
 // =============================================================================
@@ -181,6 +221,7 @@ function riskToSeverity(risk?: string): string | undefined {
 function buildCandidates(
   projectDir: string,
   input: PuntaxContextInput,
+  now: number,
 ): RankCandidate[] {
   const dir = brainDir(projectDir);
   const terms = queryTerms(input);
@@ -201,6 +242,23 @@ function buildCandidates(
       timestamp: lesson.timestamp,
       keywordScore: keywordScore(text, terms),
       fileMatch: (lesson.files || []).some((f) => fileMatches(f, input.files)),
+    });
+  }
+
+  // Typed memories (memory_write + auto-distill) → memory candidates
+  for (const mem of readMemories(dir, now)) {
+    const text = `[${mem.kind || "memory"}/${mem.severity || "info"}] ${mem.text}`;
+    candidates.push({
+      kind: "memory",
+      id: mem.id,
+      text,
+      severity: mem.severity,
+      timestamp: mem.createdAt,
+      keywordScore: keywordScore(text, terms),
+      fileMatch: (mem.files || []).some((f) => fileMatches(f, input.files)),
+      symbolMatch: (mem.symbols || []).some((s) =>
+        symbols.includes(s.toLowerCase()),
+      ),
     });
   }
 
@@ -308,7 +366,7 @@ export async function puntaxContext(
     config.contextRouter.budgets[mode] ??
     MODE_BUDGET_FALLBACK[mode];
 
-  const candidates = buildCandidates(projectDir, input);
+  const candidates = buildCandidates(projectDir, input, now);
   const { selected, omitted } = rankCandidates(candidates, {
     budgetTokens: budget,
     now,

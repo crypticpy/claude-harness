@@ -297,7 +297,13 @@ async function handleRequest(request: MCPRequest): Promise<MCPResponse> {
               query: args.query as string,
               projectPath: projectDir,
               sources: args.sources as
-                | ("lessons" | "file-insights" | "conventions" | "hot-files")[]
+                | (
+                    | "lessons"
+                    | "file-insights"
+                    | "conventions"
+                    | "hot-files"
+                    | "memories"
+                  )[]
                 | undefined,
             });
             break;

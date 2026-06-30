@@ -68,6 +68,8 @@ export function estimateTokens(text: string): number {
 
 function severityWeight(severity?: string): number {
   switch ((severity || "").toLowerCase()) {
+    case "critical":
+      return 4;
     case "high":
       return 3;
     case "medium":

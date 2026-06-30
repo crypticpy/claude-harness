@@ -45,10 +45,20 @@ interface HotFile {
 }
 
 interface SearchResult {
-  source: "lesson" | "file-insight" | "convention" | "hot-file";
+  source: "lesson" | "file-insight" | "convention" | "hot-file" | "memory";
   match: string;
   context: string;
   relevance: number;
+}
+
+interface Memory {
+  kind: string;
+  scope?: string;
+  text: string;
+  severity?: string;
+  files?: string[];
+  symbols?: string[];
+  status?: string;
 }
 
 // =============================================================================
@@ -73,7 +83,9 @@ function ensureBrainDir(projectPath: string): void {
 export interface BrainSearchInput {
   query: string;
   projectPath: string;
-  sources?: ("lessons" | "file-insights" | "conventions" | "hot-files")[];
+  sources?: (
+    "lessons" | "file-insights" | "conventions" | "hot-files" | "memories"
+  )[];
 }
 
 export interface BrainSearchResult {
@@ -198,6 +210,46 @@ export async function brainSearch(
               context: intel?.summary
                 ? `${hf.path}: ${intel.summary.split("\n")[0]}`
                 : `${hf.path}: ${hf.reason}`,
+              relevance,
+            });
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  // Search typed memories (memory_write + auto-distill). Active only.
+  if (!sources || sources.includes("memories")) {
+    const memoriesPath = path.join(brainDir, "memories.jsonl");
+    if (fs.existsSync(memoriesPath)) {
+      try {
+        const memories = fs
+          .readFileSync(memoriesPath, "utf-8")
+          .split("\n")
+          .filter((line) => line.trim())
+          .map((line) => {
+            try {
+              return JSON.parse(line) as Memory;
+            } catch {
+              return null;
+            }
+          })
+          .filter(
+            (m): m is Memory =>
+              m !== null && (m.status === undefined || m.status === "active"),
+          );
+
+        for (const mem of memories) {
+          const text =
+            `${mem.kind} ${mem.text} ${(mem.files || []).join(" ")}`.toLowerCase();
+          const relevance = calculateRelevance(text, queryTerms);
+          if (relevance > 0) {
+            results.push({
+              source: "memory",
+              match: mem.text.slice(0, 80),
+              context: `[${mem.kind}/${mem.severity || "info"}] ${mem.text}`,
               relevance,
             });
           }
@@ -347,7 +399,7 @@ export const brainToolDefinitions = [
   {
     name: "brain_search",
     description:
-      "Search your persistent brain for lessons, file insights, conventions, and hot files. Use this to recall what you learned in previous sessions.",
+      "Search your persistent brain for lessons, file insights, conventions, hot files, and typed memories. Use this to recall what you learned in previous sessions.",
     inputSchema: {
       type: "object",
       properties: {
@@ -364,7 +416,13 @@ export const brainToolDefinitions = [
           type: "array",
           items: {
             type: "string",
-            enum: ["lessons", "file-insights", "conventions", "hot-files"],
+            enum: [
+              "lessons",
+              "file-insights",
+              "conventions",
+              "hot-files",
+              "memories",
+            ],
           },
           description: "Which sources to search (default: all)",
         },

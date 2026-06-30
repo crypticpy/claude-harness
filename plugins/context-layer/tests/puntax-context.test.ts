@@ -159,4 +159,100 @@ describe("puntaxContext", () => {
     expect(out.confidence).toBe("low");
     expect(out.nextTools.length).toBeGreaterThan(0);
   });
+
+  it("surfaces an active typed memory (memories.jsonl) matching the task", async () => {
+    writeBrain(
+      "memories.jsonl",
+      JSON.stringify({
+        id: "mem_a",
+        kind: "gotcha",
+        scope: "project",
+        text: "the ranker tie-break must stay deterministic across runs",
+        severity: "high",
+        createdAt: new Date(NOW).toISOString(),
+        status: "active",
+      }),
+    );
+
+    const out = await puntaxContext(
+      { task: "improve ranker tie-break", projectDir, mode: "debug" },
+      { config: config(), now: NOW },
+    );
+
+    expect(out.context).toContain("ranker tie-break must stay deterministic");
+    expect(out.sources.some((s) => s.kind === "memory")).toBe(true);
+  });
+
+  it("excludes archived and expired typed memories from recall", async () => {
+    writeBrain(
+      "memories.jsonl",
+      [
+        JSON.stringify({
+          id: "mem_active",
+          kind: "decision",
+          text: "widget pipeline uses the active path",
+          severity: "medium",
+          createdAt: new Date(NOW).toISOString(),
+          status: "active",
+        }),
+        JSON.stringify({
+          id: "mem_archived",
+          kind: "decision",
+          text: "widget pipeline once used the archived path",
+          severity: "medium",
+          createdAt: new Date(NOW).toISOString(),
+          status: "archived",
+        }),
+        JSON.stringify({
+          id: "mem_expired",
+          kind: "decision",
+          text: "widget pipeline temporarily used the expired path",
+          severity: "medium",
+          createdAt: new Date(NOW - 1000).toISOString(),
+          status: "active",
+          expiresAt: new Date(NOW - 1).toISOString(),
+        }),
+      ].join("\n"),
+    );
+
+    const out = await puntaxContext(
+      { task: "widget pipeline path", projectDir, mode: "debug" },
+      { config: config(), now: NOW },
+    );
+
+    expect(out.context).toContain("active path");
+    expect(out.context).not.toContain("archived path");
+    expect(out.context).not.toContain("expired path");
+  });
+
+  it("ranks a critical typed memory above a low-severity lesson", async () => {
+    writeBrain(
+      "memories.jsonl",
+      JSON.stringify({
+        id: "mem_crit",
+        kind: "constraint",
+        text: "never mutate the shared ranker cache",
+        severity: "critical",
+        createdAt: new Date(NOW).toISOString(),
+        status: "active",
+      }),
+    );
+    writeBrain(
+      "lessons.jsonl",
+      JSON.stringify({
+        timestamp: new Date(NOW).toISOString(),
+        type: "note",
+        lesson: "the ranker cache lives in memory",
+        severity: "low",
+      }),
+    );
+
+    const out = await puntaxContext(
+      { task: "ranker cache", projectDir, mode: "debug" },
+      { config: config(), now: NOW },
+    );
+
+    expect(out.context.split("\n")[0]).toContain("never mutate");
+    expect(out.sources[0].kind).toBe("memory");
+  });
 });
