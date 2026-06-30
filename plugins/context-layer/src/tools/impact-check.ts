@@ -124,6 +124,14 @@ export async function checkImpact(
   const normalizedFilePath = path.resolve(filePath);
   const normalizedProjectPath = path.resolve(projectPath);
 
+  // The file-level index path re-walks the code map on every call, so it is both
+  // fresh and cheap. Caching its result by the TARGET's hash would be unsound —
+  // who imports a file depends on OTHER files, so an unchanged target could
+  // return a stale importer list after an importer is added/removed. So the
+  // index path bypasses the hash cache entirely; only the symbol/LSP/regex tiers
+  // (whose result tracks the target's own content) use it.
+  const indexPathApplies = codeMapEnabled() && !symbolName;
+
   // Check cache
   const cacheKey = generateSymbolSearchCacheKey(
     "impact-check",
@@ -136,7 +144,9 @@ export async function checkImpact(
     const content = fs.readFileSync(normalizedFilePath, "utf-8");
     fileHash = computeFileHash(content);
 
-    const cached = cache.get<ImpactResult>(cacheKey, fileHash);
+    const cached = indexPathApplies
+      ? null
+      : cache.get<ImpactResult>(cacheKey, fileHash);
     if (cached) {
       return {
         success: true,
@@ -182,14 +192,15 @@ export async function checkImpact(
     // Index-first (file-level only): code-map import edges fully capture which
     // files import the target. Symbol-level falls through to the scan below —
     // call/reference sites need the Tree-sitter/LSP tiers (Phase 3b).
-    if (codeMapEnabled() && !symbolName) {
+    if (indexPathApplies) {
       const indexed = impactFromIndex(
         normalizedProjectPath,
         normalizedFilePath,
         startTime,
       );
       if (indexed) {
-        cache.set(cacheKey, indexed, fileHash, normalizedFilePath);
+        // No cache.set: the index path is freshness-sensitive (see indexPathApplies)
+        // and bypasses the hash cache on both read and write.
         return {
           success: true,
           data: indexed,
@@ -245,8 +256,14 @@ export async function checkImpact(
       },
     };
 
-    // Cache the result
-    cache.set(cacheKey, result, fileHash, normalizedFilePath);
+    // Cache the result — but never under an index-path key. When indexPathApplies
+    // we reach the regex fallback only because impactFromIndex returned null
+    // (unparseable/unindexed target); caching that file-level result by the
+    // target's own hash is the unsound, never-read entry the cache.get bypass is
+    // designed to avoid. Skipping the write keeps get/set symmetric.
+    if (!indexPathApplies) {
+      cache.set(cacheKey, result, fileHash, normalizedFilePath);
+    }
 
     return {
       success: true,
@@ -943,13 +960,21 @@ function impactFromIndex(
       .join("/");
     if (!relPath || relPath.startsWith("..")) return null;
 
-    ensureProjectIndexed(projectRootAbs);
+    // Self-heal staleness: the index is otherwise built once and never
+    // refreshed, so files added or edited since then are missing/stale here and
+    // silently drop us to the slower regex scan — or worse, return an INCOMPLETE
+    // importer list (a new importer's edge lives on its own row, absent from the
+    // index until re-walked). `force: true` runs a full re-walk that is cheap
+    // because unchanged files are skipped by hash; only changed files re-parse,
+    // and Phase C rebuilds every edge — so the importer set is complete and
+    // correct, and still faster than parsing every file in the fallback.
+    ensureProjectIndexed(projectRootAbs, { force: true });
     const cm = openCodeMap(projectRootAbs);
     if (!cm) return null;
     try {
       const projectId = projectIdFor(projectRootAbs);
       const targetFile = cm.getFile(projectId, relPath);
-      if (!targetFile) return null; // not indexed (e.g. brand-new file)
+      if (!targetFile) return null; // still unresolved (e.g. unparseable file)
 
       const pathById = new Map(
         cm.listFiles(projectId).map((f) => [f.id, f.path] as const),

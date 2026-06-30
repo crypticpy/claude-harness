@@ -8,6 +8,8 @@ import { checkImpact } from "../src/tools/impact-check";
 import { getSymbolContext } from "../src/tools/symbol-context";
 import { refreshIndex } from "../src/tools/refresh-index";
 import { indexStatusTool } from "../src/tools/index-status";
+import { openCodeMap } from "../src/indexer/code-map-service";
+import { projectIdFor } from "../src/storage/code-map";
 
 let projectDir: string;
 let savedEnv: Record<string, string | undefined>;
@@ -101,6 +103,44 @@ describe("impact_check index-first (file level)", () => {
     expect(deps.length).toBeGreaterThanOrEqual(1);
     expect(deps.some((d) => d.filePath.endsWith("main.ts"))).toBe(true);
     expect(deps.every((d) => d.usage === "import")).toBe(true);
+  });
+
+  it("self-heals: finds an importer added after the initial index", async () => {
+    write("src/util.ts", `export function helper() { return 1; }\n`);
+    write(
+      "src/main.ts",
+      `import { helper } from './util';\nexport function run() { return helper(); }\n`,
+    );
+
+    // First call builds the index — main.ts is the only importer.
+    const first = await checkImpact({
+      filePath: path.join(projectDir, "src/util.ts"),
+      projectPath: projectDir,
+    });
+    expect(
+      first.data!.dependents.some((d) => d.filePath.endsWith("main.ts")),
+    ).toBe(true);
+
+    // Add a NEW importer AFTER the index exists. Without the force re-walk its
+    // import edge is absent from the index, so impact_check would miss it.
+    write(
+      "src/other.ts",
+      `import { helper } from './util';\nexport const x = helper();\n`,
+    );
+
+    const second = await checkImpact({
+      filePath: path.join(projectDir, "src/util.ts"),
+      projectPath: projectDir,
+    });
+    const deps = second.data!.dependents.map((d) => d.filePath);
+    expect(deps.some((f) => f.endsWith("main.ts"))).toBe(true);
+    expect(deps.some((f) => f.endsWith("other.ts"))).toBe(true); // self-healed
+
+    // The new file is now genuinely in the index (the re-walk picked it up),
+    // proving the result came from the index path, not the regex fallback.
+    const cm = openCodeMap(projectDir)!;
+    expect(cm.getFile(projectIdFor(projectDir), "src/other.ts")).not.toBeNull();
+    cm.close();
   });
 });
 
