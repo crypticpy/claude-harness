@@ -40,6 +40,16 @@ describe("parseFile — TS export classification (common case preserved)", () =>
     expect(r.imports.find((i) => i.name === "plain")!.isTypeOnly).toBe(false);
   });
 
+  it("lists an exported abstract class in both exports and classes", () => {
+    const r = ts("export abstract class Shape { abstract area(): number; }\n");
+    const exp = r.exports.find((e) => e.name === "Shape");
+    expect(exp).toBeTruthy();
+    expect(exp!.kind).toBe("class");
+    const cls = r.classes.find((c) => c.name === "Shape")!;
+    expect(cls.isExported).toBe(true);
+    expect(cls.isAbstract).toBe(true);
+  });
+
   it("handles named re-export braces", () => {
     const r = ts("const a = 1;\nexport { a as renamed };\n");
     const exp = r.exports.find((e) => e.name === "renamed");

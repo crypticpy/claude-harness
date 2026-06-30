@@ -112,7 +112,7 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
   // Parse exports
   const exportPatterns = [
     /^export\s+(?:default\s+)?(?:async\s+)?function\s*\*?\s*(\w+)?/gm,
-    /^export\s+(?:default\s+)?class\s+(\w+)/gm,
+    /^export\s+(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/gm,
     /^export\s+(const|let|var)\s+(\w+)/gm,
     /^export\s+(?:type|interface)\s+(\w+)/gm,
     /^export\s+enum\s+(\w+)/gm,
@@ -134,7 +134,7 @@ function parseTypeScript(content: string, result: ParseResult, _opts: Required<P
           line,
           isReexport: false,
         });
-      } else if (/^export\s+(?:default\s+)?class\b/.test(match[0])) {
+      } else if (/^export\s+(?:default\s+)?(?:abstract\s+)?class\b/.test(match[0])) {
         result.exports.push({
           name: match[1],
           kind: 'class',
