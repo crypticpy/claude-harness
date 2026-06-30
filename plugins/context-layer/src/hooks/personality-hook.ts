@@ -185,7 +185,8 @@ function loadTokenStats(currentSessionId?: string): TokenStats | null {
 }
 
 function formatTokenAwareness(stats: TokenStats): string {
-  // Calculate remaining until COMPACTION (154K), not total context (200K)
+  // Remaining is measured against the COMPACTION threshold, not the full
+  // context window — the same denominator the statusline uses.
   const compactionK = Math.round(COMPACTION_THRESHOLD / 1000);
   const remainingUntilCompaction = COMPACTION_THRESHOLD - stats.current_tokens;
   const remainingK = Math.round(remainingUntilCompaction / 1000);
