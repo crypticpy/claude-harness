@@ -516,31 +516,93 @@ function buildVariableContext(
 // ============================================================================
 
 /**
- * Extracts the primary type name from a type annotation.
- * E.g., "Promise<User>" -> "Promise", "User[]" -> "User"
+ * Builtin/utility generic wrappers whose own name carries no navigational value
+ * — the interesting type is the argument, so these get unwrapped.
+ */
+const CONTAINER_GENERICS = new Set([
+  "Promise",
+  "Array",
+  "ReadonlyArray",
+  "Set",
+  "ReadonlySet",
+  "Map",
+  "ReadonlyMap",
+  "WeakMap",
+  "WeakSet",
+  "Record",
+  "Partial",
+  "Required",
+  "Readonly",
+  "NonNullable",
+  "Awaited",
+  "Iterable",
+  "AsyncIterable",
+  "Iterator",
+  "Generator",
+  "AsyncGenerator",
+]);
+
+/**
+ * Extracts the most navigationally-useful type name from a type annotation.
+ *
+ * A builtin container generic is unwrapped to its first non-primitive type
+ * argument; a user-defined generic keeps its outer name. This also makes `T[]`
+ * and `Array<T>` agree.
+ *   "Promise<User>" -> "User"   "User[]" -> "User"   "Array<User>" -> "User"
+ *   "Map<string, Cfg>" -> "Cfg"  "Result<T>" -> "Result"  "Promise<void>" -> null
+ * Returns null when there is no navigable identifier (e.g. a container of only
+ * primitives, or an empty annotation).
  */
 function extractTypeName(typeAnnotation: string): string | null {
-  // Remove Promise, Array wrappers
-  let type = typeAnnotation.trim();
+  const type = typeAnnotation.trim();
 
-  // Handle array types
+  // Array shorthand: peel one level (recurse for nested arrays like User[][]).
   if (type.endsWith("[]")) {
-    type = type.slice(0, -2);
+    return extractTypeName(type.slice(0, -2));
   }
 
-  // Handle generic types - extract outer type
-  const genericMatch = type.match(/^(\w+)</);
+  // Generic: outer name + inner args. Require a closing `>` so a truncated
+  // annotation falls through to the plain-identifier branch below.
+  const genericMatch = type.match(/^(\w+)\s*<(.+)>$/);
   if (genericMatch) {
-    return genericMatch[1];
+    const outer = genericMatch[1];
+    // Container wrapper: surface the first non-primitive type argument instead
+    // of the wrapper itself; null if every argument is a primitive.
+    if (CONTAINER_GENERICS.has(outer)) {
+      for (const arg of splitTypeArgs(genericMatch[2])) {
+        const inner = extractTypeName(arg);
+        if (inner && !isPrimitiveType(inner)) return inner;
+      }
+      return null;
+    }
+    return outer; // user-defined generic — the outer name IS the type
   }
 
-  // Handle union/intersection - take first type
-  const unionMatch = type.match(/^(\w+)/);
-  if (unionMatch) {
-    return unionMatch[1];
-  }
+  // Union/intersection or a plain identifier — take the leading identifier.
+  const leadMatch = type.match(/^(\w+)/);
+  return leadMatch ? leadMatch[1] : null;
+}
 
-  return null;
+/**
+ * Split top-level generic type arguments on commas, respecting nested `<>`/`[]`.
+ * E.g. "string, Record<string, X>" -> ["string", "Record<string, X>"]. Depth is
+ * clamped at 0 so a stray `>` (e.g. inside `=>`) cannot corrupt later splits.
+ */
+function splitTypeArgs(args: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < args.length; i++) {
+    const ch = args[i];
+    if (ch === "<" || ch === "[") depth++;
+    else if (ch === ">" || ch === "]") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      out.push(args.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(args.slice(start));
+  return out.map((s) => s.trim()).filter(Boolean);
 }
 
 /**
