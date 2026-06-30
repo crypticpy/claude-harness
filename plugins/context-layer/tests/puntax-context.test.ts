@@ -212,6 +212,15 @@ describe("puntaxContext", () => {
           status: "active",
           expiresAt: new Date(NOW - 1).toISOString(),
         }),
+        JSON.stringify({
+          id: "mem_garbage_expiry",
+          kind: "decision",
+          text: "widget pipeline briefly used the corrupt path",
+          severity: "medium",
+          createdAt: new Date(NOW - 1000).toISOString(),
+          status: "active",
+          expiresAt: "not-a-real-date", // Date.parse -> NaN; must be excluded
+        }),
       ].join("\n"),
     );
 
@@ -223,6 +232,7 @@ describe("puntaxContext", () => {
     expect(out.context).toContain("active path");
     expect(out.context).not.toContain("archived path");
     expect(out.context).not.toContain("expired path");
+    expect(out.context).not.toContain("corrupt path");
   });
 
   it("ranks a critical typed memory above a low-severity lesson", async () => {

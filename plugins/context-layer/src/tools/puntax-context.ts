@@ -151,7 +151,11 @@ function readMemories(dir: string, now: number): RawMemory[] {
       .filter((m): m is RawMemory => {
         if (!m || typeof m.text !== "string" || !m.text) return false;
         if (m.status !== undefined && m.status !== "active") return false;
-        if (m.expiresAt && Date.parse(m.expiresAt) <= now) return false;
+        if (m.expiresAt) {
+          const exp = Date.parse(m.expiresAt);
+          // Malformed expiry is corrupt — exclude (fail-safe), matching prune.
+          if (Number.isNaN(exp) || exp <= now) return false;
+        }
         return true;
       });
   } catch {

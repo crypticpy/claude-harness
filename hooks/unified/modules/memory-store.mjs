@@ -267,7 +267,12 @@ export function pruneMemories(projectDir, opts = {}) {
       }
       if (!validateMemory(m).valid) { byReason.invalid++; continue; } // drop schema-invalid
       if (m.status && m.status !== 'active') { byReason.nonActive++; continue; } // drop non-active
-      if (m.expiresAt && Date.parse(m.expiresAt) <= now) { byReason.expired++; continue; } // drop expired
+      if (m.expiresAt) {
+        const exp = Date.parse(m.expiresAt);
+        // A present-but-unparseable expiry is corrupt — drop it (fail-safe)
+        // rather than letting NaN <= now (false) keep it in the store forever.
+        if (Number.isNaN(exp) || exp <= now) { byReason.expired++; continue; }
+      }
       if (dropJunk) {
         let junk = false;
         try { junk = dropJunk(m) === true; } catch { junk = false; } // a throwing predicate never drops

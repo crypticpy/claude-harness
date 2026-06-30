@@ -413,9 +413,14 @@ export function pruneMemories(
         byReason.nonActive++;
         continue; // drop non-active
       }
-      if (m.expiresAt && Date.parse(m.expiresAt) <= now) {
-        byReason.expired++;
-        continue; // drop expired
+      if (m.expiresAt) {
+        const exp = Date.parse(m.expiresAt);
+        // A present-but-unparseable expiry is corrupt — drop it (fail-safe)
+        // rather than letting NaN <= now (false) keep it in the store forever.
+        if (Number.isNaN(exp) || exp <= now) {
+          byReason.expired++;
+          continue; // drop expired
+        }
       }
       if (dropJunk) {
         let junk = false;

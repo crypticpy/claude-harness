@@ -274,6 +274,18 @@ describe("pruneMemories — retention GC", () => {
     expect(texts).toEqual(["future expiry", "keep active"]);
   });
 
+  it("drops a row whose expiry is present but unparseable (fail-safe)", () => {
+    // A corrupt/garbage expiresAt makes Date.parse return NaN; NaN <= now is
+    // false, so the naive check would keep it forever. Treat it as expired.
+    appendMemory(dir, baseInput({ text: "keep active" }));
+    appendMemory(dir, baseInput({ text: "garbage expiry", expiresAt: "not-a-date" }));
+    expect(readMemories(dir)).toHaveLength(2);
+
+    const res = pruneMemories(dir, { now: NOW });
+    expect(res.byReason.expired).toBe(1);
+    expect(readMemories(dir).map((m) => m.text)).toEqual(["keep active"]);
+  });
+
   it("is a no-op (no rewrite) when nothing needs dropping", () => {
     appendMemory(dir, baseInput({ text: "only row" }));
     const res = pruneMemories(dir, { now: NOW });
