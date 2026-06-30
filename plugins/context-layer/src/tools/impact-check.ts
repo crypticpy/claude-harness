@@ -270,7 +270,15 @@ export async function checkImpact(
 // ============================================================================
 
 async function findProjectFiles(projectPath: string): Promise<string[]> {
-  const patterns = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py"];
+  const patterns = [
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.js",
+    "**/*.jsx",
+    "**/*.mjs",
+    "**/*.cjs",
+    "**/*.py",
+  ];
 
   const ignorePatterns = [
     "**/node_modules/**",
@@ -599,11 +607,15 @@ function isImportFromFile(
       ".tsx",
       ".js",
       ".jsx",
+      ".mjs",
+      ".cjs",
       ".py",
       "/index.ts",
       "/index.tsx",
       "/index.js",
       "/index.jsx",
+      "/index.mjs",
+      "/index.cjs",
       "/__init__.py",
     ];
 
