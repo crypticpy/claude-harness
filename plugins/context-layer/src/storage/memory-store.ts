@@ -278,6 +278,55 @@ export function appendMemory(
   return { written: true, id: mem.id };
 }
 
+export interface AppendBatchResult {
+  written: number;
+  results: AppendResult[];
+}
+
+/**
+ * Batch sibling of appendMemory (TS mirror of the hook-side `appendMemories`):
+ * validate, dedup (against the store AND within the batch), and append all
+ * survivors with ONE store read and ONE write. appendMemory re-reads the whole
+ * store on every call, so writing K candidates against N existing rows is
+ * O(K·N); this collapses it to O(N+K). Per-item semantics match appendMemory
+ * exactly; the only addition is intra-batch dedup. Results are in input order.
+ */
+export function appendMemories(
+  projectDir: string,
+  inputs: MemoryInput[],
+): AppendBatchResult {
+  if (!Array.isArray(inputs) || inputs.length === 0) {
+    return { written: 0, results: [] };
+  }
+  const file = memoriesPath(projectDir);
+  ensureDir(path.dirname(file));
+  const seen = new Set(readMemories(projectDir).map((m) => m.id)); // single read
+  const results: AppendResult[] = [];
+  const lines: string[] = [];
+  for (const input of inputs) {
+    const mem = normalizeMemory(input);
+    const check = validateMemory(mem);
+    if (!check.valid) {
+      results.push({
+        written: false,
+        id: mem.id,
+        reason: "invalid",
+        errors: check.errors,
+      });
+      continue;
+    }
+    if (seen.has(mem.id)) {
+      results.push({ written: false, id: mem.id, reason: "duplicate" });
+      continue;
+    }
+    seen.add(mem.id);
+    lines.push(JSON.stringify(mem));
+    results.push({ written: true, id: mem.id });
+  }
+  if (lines.length) fs.appendFileSync(file, lines.join("\n") + "\n"); // single write
+  return { written: lines.length, results };
+}
+
 const DEFAULT_KIND_CAP = 50;
 const SEVERITY_RANK: Record<string, number> = {
   critical: 3,

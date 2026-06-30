@@ -22,7 +22,7 @@ import { resolve } from 'node:path';
 import { parseTranscript } from './precompact-llm.mjs';
 import { callLlm } from './llm-call.mjs';
 import {
-  appendMemory as appendMemoryReal,
+  appendMemories as appendMemoriesReal,
   projectIdFor,
   MEMORY_KINDS,
   MEMORY_SCOPES,
@@ -120,13 +120,14 @@ function readSignals(event, parse) {
  * @param {object} config  full unified-hook config
  * @param {string|null} apiKey
  * @param {object} opts    { checkpoint, force?, projectDir?, thresholds?,
- *                           deps?: { callLlm, appendMemory, parseTranscript } }
+ *                           deps?: { callLlm, appendMemories, parseTranscript,
+ *                           appendMemory? } }  appendMemory (single) still
+ *                           overrides the batch path when injected.
  */
 export async function runDistill(event, config = {}, apiKey = null, opts = {}) {
   try {
     const deps = opts.deps || {};
     const parse = deps.parseTranscript || parseTranscript;
-    const appendMemory = deps.appendMemory || appendMemoryReal;
     const llm = deps.callLlm || callLlm;
 
     const projectDir = resolve(opts.projectDir || process.env.CLAUDE_PROJECT_DIR || process.cwd());
@@ -165,9 +166,16 @@ export async function runDistill(event, config = {}, apiKey = null, opts = {}) {
     const proposals = parseProposals(result, projectId, reasons);
     if (proposals.length === 0) return { distilled: false, reason: 'no-proposals', reasons };
 
-    let written = 0;
-    for (const p of proposals) {
-      if (appendMemory(projectDir, p).written) written += 1;
+    // Batch append: one store read for all proposals (was one read per proposal).
+    // A custom single-appender (deps.appendMemory) is still honored for tests.
+    let written;
+    if (deps.appendMemory) {
+      written = 0;
+      for (const p of proposals) {
+        if (deps.appendMemory(projectDir, p).written) written += 1;
+      }
+    } else {
+      written = (deps.appendMemories || appendMemoriesReal)(projectDir, proposals).written;
     }
     return { distilled: true, written, proposed: proposals.length, reasons };
   } catch (err) {

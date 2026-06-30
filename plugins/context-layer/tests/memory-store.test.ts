@@ -8,6 +8,7 @@ import {
   normalizeMemory,
   validateMemory,
   appendMemory,
+  appendMemories,
   readMemories,
   memoriesPath,
   pruneMemories,
@@ -23,6 +24,7 @@ import {
   validateMemory as validateMemoryMjs,
   projectIdFor as projectIdForMjs,
   pruneMemories as pruneMemoriesMjs,
+  appendMemories as appendMemoriesMjs,
 } from "../../../hooks/unified/modules/memory-store.mjs";
 
 let dir: string;
@@ -138,6 +140,80 @@ describe("appendMemory — persist + dedup + reject", () => {
   });
 });
 
+describe("appendMemories — batch persist (one read, one write)", () => {
+  it("writes several distinct memories and reports each", () => {
+    const res = appendMemories(dir, [
+      baseInput({ text: "first fact" }),
+      baseInput({ text: "second fact" }),
+      baseInput({ text: "third fact" }),
+    ]);
+    expect(res.written).toBe(3);
+    expect(res.results.map((r) => r.written)).toEqual([true, true, true]);
+    expect(readMemories(dir)).toHaveLength(3);
+  });
+
+  it("dedups within the batch (two identical inputs collapse to one)", () => {
+    const res = appendMemories(dir, [
+      baseInput({ text: "same" }),
+      baseInput({ text: "same" }),
+    ]);
+    expect(res.written).toBe(1);
+    expect(res.results[1].reason).toBe("duplicate");
+    expect(readMemories(dir)).toHaveLength(1);
+  });
+
+  it("dedups against rows already in the store", () => {
+    appendMemory(dir, baseInput({ text: "already here" }));
+    const res = appendMemories(dir, [
+      baseInput({ text: "already here" }),
+      baseInput({ text: "brand new" }),
+    ]);
+    expect(res.written).toBe(1);
+    expect(res.results[0].reason).toBe("duplicate");
+    expect(readMemories(dir)).toHaveLength(2);
+  });
+
+  it("reports invalid rows without aborting valid ones", () => {
+    const res = appendMemories(dir, [
+      baseInput({ text: "" }), // invalid
+      baseInput({ text: "valid one" }),
+    ]);
+    expect(res.written).toBe(1);
+    expect(res.results[0].reason).toBe("invalid");
+    expect(res.results[1].written).toBe(true);
+    expect(readMemories(dir)).toHaveLength(1);
+  });
+
+  it("matches the result of looping appendMemory (semantic equivalence)", () => {
+    const inputs = [
+      baseInput({ text: "a" }),
+      baseInput({ text: "a" }), // dup
+      baseInput({ text: "b" }),
+      baseInput({ text: "" }), // invalid
+    ];
+    const batchDir = dir;
+    const loopDir = fs.mkdtempSync(path.join(os.tmpdir(), "mem-loop-"));
+    try {
+      const batch = appendMemories(batchDir, inputs);
+      const loop = inputs.map((i) => appendMemory(loopDir, i));
+      expect(batch.results.map((r) => [r.written, r.reason ?? null])).toEqual(
+        loop.map((r) => [r.written, r.reason ?? null]),
+      );
+      expect(readMemories(batchDir).map((m) => m.text).sort()).toEqual(
+        readMemories(loopDir).map((m) => m.text).sort(),
+      );
+    } finally {
+      fs.rmSync(loopDir, { recursive: true, force: true });
+    }
+  });
+
+  it("handles empty / non-array input without writing", () => {
+    expect(appendMemories(dir, [])).toEqual({ written: 0, results: [] });
+    expect(appendMemories(dir, null as never)).toEqual({ written: 0, results: [] });
+    expect(fs.existsSync(memoriesPath(dir))).toBe(false);
+  });
+});
+
 describe("cross-runtime parity (.ts vs .mjs)", () => {
   it("memoryId matches across runtimes", () => {
     expect(memoryIdMjs("prj_a", "gotcha", "project", "shared text")).toBe(
@@ -160,6 +236,20 @@ describe("cross-runtime parity (.ts vs .mjs)", () => {
 
   it("projectIdFor matches across runtimes for the same root", () => {
     expect(projectIdForTs("/x/y/z")).toBe(projectIdForMjs("/x/y/z"));
+  });
+
+  it("appendMemories writes rows the other runtime reads with identical ids", () => {
+    // .mjs writes the batch; TS readMemories must parse every row back.
+    const written = appendMemoriesMjs(dir, [
+      baseInput({ text: "cross-runtime one" }),
+      baseInput({ text: "cross-runtime two" }),
+    ]);
+    expect(written.written).toBe(2);
+    const back = readMemories(dir);
+    expect(back).toHaveLength(2);
+    expect(back.map((m) => m.id).sort()).toEqual(
+      written.results.map((r: { id: string }) => r.id).sort(),
+    );
   });
 });
 

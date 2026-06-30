@@ -19,7 +19,7 @@
 
 import { resolve } from 'node:path';
 import { readEvents } from './event-writer.mjs';
-import { appendMemory, projectIdFor } from './memory-store.mjs';
+import { appendMemories, projectIdFor } from './memory-store.mjs';
 
 const MAX_CMD = 200;
 const MAX_MSG = 300;
@@ -142,7 +142,9 @@ export function deriveMemories(events, projectId, opts = {}) {
  * Fail-open: returns { written, candidates } and never throws to the hook path.
  *
  * @param {object} event  the hook event ({ session_id })
- * @param {object} opts   { projectDir, deps: { readEvents, appendMemory } }
+ * @param {object} opts   { projectDir, deps: { readEvents, appendMemories,
+ *                          appendMemory? } }  appendMemory (single) still
+ *                          overrides the batch path when injected.
  */
 export function runAutoDistill(event, opts = {}) {
   try {
@@ -153,7 +155,9 @@ export function runAutoDistill(event, opts = {}) {
 
     const deps = opts.deps || {};
     const readEv = deps.readEvents || readEvents;
-    const append = deps.appendMemory || appendMemory;
+    // Batch append: one store read for the whole session, not one per candidate.
+    // A custom single-appender (deps.appendMemory) is still honored for tests.
+    const appendBatch = deps.appendMemories || appendMemories;
 
     const events = readEv(projectDir, { sessionId });
     if (!events.length) return { written: 0, candidates: 0 };
@@ -161,10 +165,14 @@ export function runAutoDistill(event, opts = {}) {
     const projectId = projectIdFor(resolve(projectDir));
     const candidates = deriveMemories(events, projectId, { now: Date.now() });
 
-    let written = 0;
-    for (const input of candidates) {
-      const res = append(projectDir, input);
-      if (res && res.written) written++;
+    let written;
+    if (deps.appendMemory) {
+      written = 0;
+      for (const input of candidates) {
+        if (deps.appendMemory(projectDir, input)?.written) written++;
+      }
+    } else {
+      written = appendBatch(projectDir, candidates).written;
     }
     return { written, candidates: candidates.length };
   } catch (err) {
