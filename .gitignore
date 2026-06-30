@@ -57,6 +57,9 @@ hooks/unified/skill-state.json
 context-layer/.last-session
 context-layer/lessons.jsonl
 
+# Node deps / tool caches anywhere in the tree (e.g. stray root node_modules/.vite from running vitest)
+node_modules/
+
 # Plugin build artifacts and dependencies
 plugins/context-layer/node_modules/
 plugins/context-layer/dist/
