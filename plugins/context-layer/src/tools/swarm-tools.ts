@@ -7,7 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 /**
  * Generate a unique agent ID
@@ -121,8 +121,9 @@ function saveLocks(projectPath: string, locks: FileLocks): void {
 
 function gitCommit(projectPath: string, message: string): void {
     try {
-        execSync(`git add ${SWARM_DIR}`, { cwd: projectPath });
-        execSync(`git commit -m "${message}" --no-verify`, { cwd: projectPath });
+        // argv form (no shell): a commit `message` cannot inject a command.
+        execFileSync('git', ['add', SWARM_DIR], { cwd: projectPath });
+        execFileSync('git', ['commit', '-m', message, '--no-verify'], { cwd: projectPath });
     } catch (e) {
         // Ignore if nothing to commit
     }
