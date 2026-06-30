@@ -131,6 +131,41 @@ describe("collectStructuredContext", () => {
     expect(s.topMemories[0].severity).toBe("high");
   });
 
+  it("excludes expired and malformed-expiry memories from the SessionStart roll-up", () => {
+    // The injected context must match the store's "active, non-expired" contract:
+    // an expired row and a present-but-unparseable expiresAt (Date.parse -> NaN)
+    // are both hidden, so only the live memory counts.
+    const base = {
+      projectId: projectIdFor(dir),
+      kind: "gotcha",
+      scope: "project",
+      severity: "high",
+      confidence: "observed",
+      provenance: { source: "test_failure" },
+    };
+    appendMemory(dir, {
+      ...base,
+      text: "live memory survives the roll-up",
+      expiresAt: "2099-01-01T00:00:00Z",
+    });
+    appendMemory(dir, {
+      ...base,
+      text: "expired memory must be dropped",
+      expiresAt: "2020-01-01T00:00:00Z",
+    });
+    appendMemory(dir, {
+      ...base,
+      text: "corrupt-expiry memory must be dropped",
+      expiresAt: "not-a-date",
+    });
+
+    const s = collectStructuredContext(dir);
+    expect(s.counts.memories).toBe(1);
+    expect(s.topMemories.map((m) => m.text)).toEqual([
+      "live memory survives the roll-up",
+    ]);
+  });
+
   it("absorbs transcript-fallback checkpoints (recentErrors → failures)", () => {
     writeCheckpoints([
       {

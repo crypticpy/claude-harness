@@ -59,6 +59,7 @@ interface Memory {
   files?: string[];
   symbols?: string[];
   status?: string;
+  expiresAt?: string;
 }
 
 // =============================================================================
@@ -230,11 +231,12 @@ export async function brainSearch(
     }
   }
 
-  // Search typed memories (memory_write + auto-distill). Active only.
+  // Search typed memories (memory_write + auto-distill). Active, non-expired only.
   if (!sources || sources.includes("memories")) {
     const memoriesPath = path.join(brainDir, "memories.jsonl");
     if (fs.existsSync(memoriesPath)) {
       try {
+        const now = Date.now();
         const memories = fs
           .readFileSync(memoriesPath, "utf-8")
           .split("\n")
@@ -246,10 +248,18 @@ export async function brainSearch(
               return null;
             }
           })
-          .filter(
-            (m): m is Memory =>
-              m !== null && (m.status === undefined || m.status === "active"),
-          );
+          .filter((m): m is Memory => {
+            if (m === null) return false;
+            if (m.status !== undefined && m.status !== "active") return false;
+            if (m.expiresAt) {
+              const exp = Date.parse(m.expiresAt);
+              // Malformed expiry is corrupt — exclude (fail-safe), matching the
+              // store's prune + puntax_context recall. Otherwise NaN <= now is
+              // false and an expired row leaks until the next prune sweep.
+              if (Number.isNaN(exp) || exp <= now) return false;
+            }
+            return true;
+          });
 
         for (const mem of memories) {
           const text =

@@ -116,4 +116,46 @@ describe("brainSearch — typed memories source", () => {
     });
     expect(lessonsOnly.results.some((r) => r.source === "memory")).toBe(false);
   });
+
+  it("excludes expired and malformed-expiry memories from recall", async () => {
+    // Recall must match the store's "active, non-expired" contract: an expired
+    // row, and a row whose expiresAt is present-but-unparseable (Date.parse ->
+    // NaN), must both be hidden — not leaked until the next prune sweep.
+    writeBrain(
+      "memories.jsonl",
+      [
+        JSON.stringify({
+          id: "mem_live",
+          kind: "decision",
+          text: "cache layer uses the fresh path",
+          status: "active",
+          expiresAt: "2099-01-01T00:00:00Z", // far future -> kept
+        }),
+        JSON.stringify({
+          id: "mem_expired",
+          kind: "decision",
+          text: "cache layer once used the stale path",
+          status: "active",
+          expiresAt: "2020-01-01T00:00:00Z", // past -> excluded
+        }),
+        JSON.stringify({
+          id: "mem_garbage",
+          kind: "decision",
+          text: "cache layer briefly used the corrupt path",
+          status: "active",
+          expiresAt: "not-a-date", // NaN -> excluded (fail-safe)
+        }),
+      ].join("\n"),
+    );
+
+    const out = await brainSearch({
+      query: "cache layer path",
+      projectPath: projectDir,
+    });
+    expect(out.results.some((r) => r.context.includes("fresh path"))).toBe(true);
+    expect(out.results.some((r) => r.context.includes("stale path"))).toBe(false);
+    expect(out.results.some((r) => r.context.includes("corrupt path"))).toBe(
+      false,
+    );
+  });
 });

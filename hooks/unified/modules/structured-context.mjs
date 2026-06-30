@@ -96,7 +96,16 @@ export function collectStructuredContext(projectDir) {
     checkpoints = [];
   }
   try {
-    memories = readMemories(projectDir).filter((m) => m.status === undefined || m.status === 'active');
+    const now = Date.now();
+    memories = readMemories(projectDir).filter((m) => {
+      if (m.status !== undefined && m.status !== 'active') return false;
+      if (m.expiresAt) {
+        const exp = Date.parse(m.expiresAt);
+        // Malformed expiry is corrupt — exclude (fail-safe), matching prune/recall.
+        if (Number.isNaN(exp) || exp <= now) return false;
+      }
+      return true;
+    });
   } catch {
     memories = [];
   }
