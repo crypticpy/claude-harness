@@ -6,7 +6,14 @@ import * as path from "path";
 // The deterministic reducer is a hook-side ESM module one level up.
 // vitest.config.ts allows fs access to the repo root for this cross-runtime import.
 import { runReducer } from "../../../hooks/unified/modules/precompact-reducer.mjs";
-import { writeEvent } from "../../../hooks/unified/modules/event-writer.mjs";
+import {
+  writeEvent,
+  readEvents,
+} from "../../../hooks/unified/modules/event-writer.mjs";
+import {
+  appendMemory,
+  readMemories,
+} from "../../../hooks/unified/modules/memory-store.mjs";
 
 const LEDGER_ON = { puntax: { eventLedger: { enabled: true } } };
 
@@ -156,5 +163,40 @@ describe("precompact-reducer (event-ledger mode)", () => {
     );
     expect(checkpoint).not.toBeNull();
     expect(checkpoint.source).toBe("transcript");
+  });
+
+  it("runs retention GC even when the session has no new events", async () => {
+    // An out-of-retention event (other session) + an expired memory. A
+    // compaction with no NEW events for THIS session must still GC both —
+    // previously prune sat inside the events-present branch and was skipped.
+    writeEvent(
+      {
+        sessionId: "old",
+        kind: "read",
+        ts: "2000-01-01T00:00:00.000Z",
+        files: ["stale"],
+      },
+      { projectDir },
+    );
+    appendMemory(projectDir, {
+      projectId: "prj_test",
+      kind: "gotcha",
+      scope: "project",
+      text: "expired note",
+      severity: "low",
+      confidence: "observed",
+      provenance: { source: "event" },
+      expiresAt: "2000-01-01T00:00:00.000Z",
+    });
+    expect(readMemories(projectDir)).toHaveLength(1);
+
+    const checkpoint: any = await runReducer(
+      { session_id: "L3", transcript_path: transcriptPath },
+      LEDGER_ON,
+    );
+
+    expect(checkpoint.source).toBe("transcript"); // no events for L3
+    expect(readEvents(projectDir)).toHaveLength(0); // old event pruned
+    expect(readMemories(projectDir)).toHaveLength(0); // expired memory pruned
   });
 });

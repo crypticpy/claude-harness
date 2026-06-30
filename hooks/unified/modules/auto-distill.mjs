@@ -24,18 +24,31 @@ import { appendMemory, projectIdFor } from './memory-store.mjs';
 const MAX_CMD = 200;
 const MAX_MSG = 300;
 const MAX_MEMORIES = 12;
+const DEFAULT_TTL_DAYS = 90;
 
 /**
  * Pure: events → typed-memory inputs. No I/O. `projectId` is precomputed by the
  * caller so this stays deterministic and unit-testable.
  *
+ * These are low-confidence `observed` facts, so they get a TTL (`expiresAt`):
+ * pruneMemories ages them out unless the same fact keeps being re-distilled.
+ * `opts.now` is supplied by the (impure) caller — omit it to keep this pure and
+ * TTL-free for unit tests. User-written memories (memory_write) get no TTL.
+ *
  * @param {Array<object>} events  ledger events, oldest-first
  * @param {string} projectId
+ * @param {{ now?: number, ttlDays?: number }} [opts]
  * @returns {Array<object>} MemoryInput[] ready for appendMemory
  */
-export function deriveMemories(events, projectId) {
+export function deriveMemories(events, projectId, opts = {}) {
   const list = Array.isArray(events) ? events : [];
   const out = [];
+  const ttlDays = typeof opts.ttlDays === 'number' ? opts.ttlDays : DEFAULT_TTL_DAYS;
+  const expiresAt =
+    typeof opts.now === 'number'
+      ? new Date(opts.now + ttlDays * 24 * 60 * 60 * 1000).toISOString()
+      : undefined;
+  const ttl = expiresAt ? { expiresAt } : {};
 
   // test_command: distinct commands from test events.
   const seenCmd = new Set();
@@ -52,6 +65,7 @@ export function deriveMemories(events, projectId) {
       severity: 'low',
       confidence: 'observed',
       provenance: { source: 'event' },
+      ...ttl,
     });
   }
 
@@ -80,6 +94,7 @@ export function deriveMemories(events, projectId) {
       severity: 'medium',
       confidence: 'observed',
       provenance: { source: 'event' },
+      ...ttl,
     });
   }
 
@@ -108,7 +123,7 @@ export function runAutoDistill(event, opts = {}) {
     if (!events.length) return { written: 0, candidates: 0 };
 
     const projectId = projectIdFor(resolve(projectDir));
-    const candidates = deriveMemories(events, projectId);
+    const candidates = deriveMemories(events, projectId, { now: Date.now() });
 
     let written = 0;
     for (const input of candidates) {

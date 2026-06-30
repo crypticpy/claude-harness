@@ -8,6 +8,8 @@ import {
   mirrorToolEvent,
   eventsFile,
   pruneEvents,
+  checkpointsFile,
+  pruneCheckpoints,
 } from "../../../hooks/unified/modules/event-writer.mjs";
 
 let projectDir: string;
@@ -247,5 +249,30 @@ describe("pruneEvents", () => {
     const remaining = readEvents(projectDir);
     expect(remaining).toHaveLength(1);
     expect(remaining[0].files).toEqual(["fresh"]);
+  });
+});
+
+describe("pruneCheckpoints", () => {
+  it("drops checkpoints older than the retention window", () => {
+    const file = checkpointsFile(projectDir);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const rows = [
+      { type: "checkpoint", session_id: "s", timestamp: "2000-01-01T00:00:00.000Z", tag: "old" },
+      { type: "checkpoint", session_id: "s", timestamp: new Date().toISOString(), tag: "fresh" },
+    ];
+    fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+
+    pruneCheckpoints(projectDir, 30);
+    const kept = fs
+      .readFileSync(file, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l));
+    expect(kept).toHaveLength(1);
+    expect(kept[0].tag).toBe("fresh");
+  });
+
+  it("is a no-op when there is no checkpoints file", () => {
+    expect(() => pruneCheckpoints(projectDir, 30)).not.toThrow();
   });
 });

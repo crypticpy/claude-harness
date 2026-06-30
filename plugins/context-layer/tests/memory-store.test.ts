@@ -10,6 +10,7 @@ import {
   appendMemory,
   readMemories,
   memoriesPath,
+  pruneMemories,
   type MemoryInput,
 } from "../src/storage/memory-store";
 import { memoryWrite } from "../src/tools/memory-write";
@@ -21,6 +22,7 @@ import {
   memoryId as memoryIdMjs,
   validateMemory as validateMemoryMjs,
   projectIdFor as projectIdForMjs,
+  pruneMemories as pruneMemoriesMjs,
 } from "../../../hooks/unified/modules/memory-store.mjs";
 
 let dir: string;
@@ -158,6 +160,79 @@ describe("cross-runtime parity (.ts vs .mjs)", () => {
 
   it("projectIdFor matches across runtimes for the same root", () => {
     expect(projectIdForTs("/x/y/z")).toBe(projectIdForMjs("/x/y/z"));
+  });
+});
+
+describe("pruneMemories — retention GC", () => {
+  const NOW = Date.parse("2026-06-30T00:00:00Z");
+  const past = "2026-06-01T00:00:00Z";
+  const future = "2026-12-01T00:00:00Z";
+
+  it("drops expired and non-active rows, keeps active non-expired", () => {
+    appendMemory(dir, baseInput({ text: "keep active" }));
+    appendMemory(dir, baseInput({ text: "future expiry", expiresAt: future }));
+    appendMemory(dir, baseInput({ text: "past expiry", expiresAt: past }));
+    appendMemory(dir, baseInput({ text: "superseded", status: "superseded" }));
+    expect(readMemories(dir)).toHaveLength(4);
+
+    const res = pruneMemories(dir, { now: NOW });
+    expect(res.dropped).toBe(2);
+    const texts = readMemories(dir)
+      .map((m) => m.text)
+      .sort();
+    expect(texts).toEqual(["future expiry", "keep active"]);
+  });
+
+  it("is a no-op (no rewrite) when nothing needs dropping", () => {
+    appendMemory(dir, baseInput({ text: "only row" }));
+    const res = pruneMemories(dir, { now: NOW });
+    expect(res).toEqual({ kept: 1, dropped: 0 });
+  });
+
+  it("caps per (kind, scope), preferring user-confirmed + higher severity", () => {
+    // 3 low/observed + 1 high/user_confirmed, cap = 2 → keep the important one
+    // plus the newest low one.
+    appendMemory(
+      dir,
+      baseInput({ text: "low a", severity: "low", confidence: "observed" }),
+    );
+    appendMemory(
+      dir,
+      baseInput({ text: "low b", severity: "low", confidence: "observed" }),
+    );
+    appendMemory(
+      dir,
+      baseInput({
+        text: "important",
+        severity: "high",
+        confidence: "user_confirmed",
+      }),
+    );
+    const res = pruneMemories(dir, { now: NOW, kindCap: 2 });
+    expect(res.kept).toBe(2);
+    const texts = readMemories(dir).map((m) => m.text);
+    expect(texts).toContain("important"); // protected by importance
+  });
+
+  it("matches the .mjs runtime row-for-row on the same store", () => {
+    // Fixed createdAt so the two seedings are byte-identical — any difference
+    // after prune would then be a genuine cross-runtime divergence.
+    const at = "2026-06-15T00:00:00.000Z";
+    const seed = () => {
+      appendMemory(dir, baseInput({ text: "keep active", createdAt: at }));
+      appendMemory(dir, baseInput({ text: "past expiry", expiresAt: past, createdAt: at }));
+      appendMemory(dir, baseInput({ text: "superseded", status: "superseded", createdAt: at }));
+    };
+    // TS prune
+    seed();
+    pruneMemories(dir, { now: NOW });
+    const tsRows = fs.readFileSync(memoriesPath(dir), "utf-8");
+    // Reset + mjs prune over an identical seed
+    fs.rmSync(memoriesPath(dir));
+    seed();
+    pruneMemoriesMjs(dir, { now: NOW });
+    const mjsRows = fs.readFileSync(memoriesPath(dir), "utf-8");
+    expect(mjsRows).toBe(tsRows);
   });
 });
 

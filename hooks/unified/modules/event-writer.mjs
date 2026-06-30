@@ -309,3 +309,34 @@ export function pruneEvents(projectDir, retentionDays = 90) {
     if (process.env.DEBUG) process.stderr.write('[event-writer] prune error: ' + err.message + '\n');
   }
 }
+
+/**
+ * Drop checkpoints older than retentionDays. Mirrors pruneEvents — checkpoints.jsonl
+ * is append-only (one row per compaction) and otherwise grows without bound.
+ */
+export function pruneCheckpoints(projectDir, retentionDays = 90) {
+  try {
+    const file = checkpointsFile(projectDir);
+    if (!existsSync(file)) return;
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    const lines = readFileSync(file, 'utf-8').split('\n');
+    const kept = [];
+    let dropped = 0;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const c = JSON.parse(line);
+        const ts = c.timestamp ? new Date(c.timestamp).getTime() : 0;
+        if (ts >= cutoff) kept.push(line);
+        else dropped++;
+      } catch {
+        dropped++; // drop corrupt lines while we're here
+      }
+    }
+    if (dropped > 0) {
+      writeFileSync(file, kept.length ? kept.join('\n') + '\n' : '');
+    }
+  } catch (err) {
+    if (process.env.DEBUG) process.stderr.write('[event-writer] checkpoint prune error: ' + err.message + '\n');
+  }
+}

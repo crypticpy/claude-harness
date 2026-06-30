@@ -66,6 +66,16 @@ describe("deriveMemories — pure derivation", () => {
     expect(deriveMemories([], PRJ)).toEqual([]);
     expect(deriveMemories(null as any, PRJ)).toEqual([]);
   });
+
+  it("adds a TTL (expiresAt) only when a clock is supplied", () => {
+    const events = [{ kind: "test", command: "npx vitest run", outcome: "ok" }];
+    // Pure call (no clock) → no expiry, so existing tests stay deterministic.
+    expect(deriveMemories(events, PRJ)[0].expiresAt).toBeUndefined();
+    // With a clock → expiresAt is now + ttlDays so observations age out.
+    const now = Date.parse("2026-06-30T00:00:00Z");
+    const out = deriveMemories(events, PRJ, { now, ttlDays: 90 });
+    expect(out[0].expiresAt).toBe(new Date(now + 90 * 86400000).toISOString());
+  });
 });
 
 describe("runAutoDistill — writes typed memory, dedups, fail-open", () => {

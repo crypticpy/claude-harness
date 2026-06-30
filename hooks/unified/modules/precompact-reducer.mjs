@@ -23,9 +23,11 @@ import {
   readEvents,
   checkpointsFile,
   pruneEvents,
+  pruneCheckpoints,
 } from './event-writer.mjs';
 import { ensureDir } from './storage-paths.mjs';
 import { readPuntaxConfig } from './puntax-config.mjs';
+import { pruneMemories } from './memory-store.mjs';
 
 const MIN_TOOL_CALLS = 5;
 const MAX_WORKING_FILES = 8;
@@ -154,6 +156,16 @@ export async function runReducer(event, config) {
         sessionId: session_id,
         sinceTs: prev?.timestamp || null,
       });
+
+      // Retention GC runs on EVERY checkpoint while the ledger is enabled — not
+      // only when there are new events to reduce. Otherwise an event-less
+      // compaction skips prune and old rows linger until the next event-bearing
+      // one. memories.jsonl is otherwise append-only with no GC at all.
+      const retentionDays = puntax.eventLedger.retentionDays;
+      pruneEvents(projectDir, retentionDays);
+      pruneCheckpoints(projectDir, retentionDays);
+      pruneMemories(projectDir);
+
       if (events.length > 0) {
         const checkpoint = {
           timestamp: new Date().toISOString(),
@@ -163,7 +175,6 @@ export async function runReducer(event, config) {
           ...reduceEvents(events, prev),
         };
         appendCheckpoint(projectDir, checkpoint);
-        pruneEvents(projectDir, puntax.eventLedger.retentionDays);
         return checkpoint;
       }
       // No events since last checkpoint → fall through to transcript stub.

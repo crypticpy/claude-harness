@@ -12,7 +12,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { contextPaths, ensureDir } from './storage-paths.mjs';
 
@@ -163,4 +163,98 @@ export function appendMemory(projectDir, input) {
   }
   appendFileSync(file, JSON.stringify(mem) + '\n');
   return { written: true, id: mem.id };
+}
+
+const DEFAULT_KIND_CAP = 50;
+const SEVERITY_RANK = { critical: 3, high: 2, medium: 1, low: 0 };
+
+/** Cap tie-break weight: user-confirmed and higher-severity rows survive first. */
+function importanceKey(m) {
+  return {
+    conf: m.confidence === 'user_confirmed' ? 1 : 0,
+    sev: SEVERITY_RANK[m.severity] ?? 0,
+    createdAt: typeof m.createdAt === 'string' ? m.createdAt : '',
+  };
+}
+
+/**
+ * Conservative retention GC for memories.jsonl. The store is otherwise
+ * append-only, so without this nothing ever leaves: expired observations,
+ * superseded/rejected rows, and unbounded growth all linger and pollute recall.
+ * Rewrites the file (atomic temp+rename) dropping, in order:
+ *   1. corrupt / schema-invalid lines
+ *   2. non-active rows (status in {superseded, expired, rejected})
+ *   3. expired rows (expiresAt <= now)
+ *   4. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
+ *      and higher-severity rows are preferred so durable user knowledge survives.
+ * A user-written active row with no expiry is only ever dropped by the cap, which
+ * is intentionally high (50) so that rarely fires. Returns { kept, dropped }.
+ *
+ * (Refinement left for later: "touch" expiresAt on a re-observed duplicate so an
+ * actively-used command never ages out — today it self-heals via re-distillation.)
+ *
+ * @param {string} projectDir
+ * @param {{ now?: number, kindCap?: number }} [opts]
+ */
+export function pruneMemories(projectDir, opts = {}) {
+  try {
+    const file = memoriesPath(projectDir);
+    if (!existsSync(file)) return { kept: 0, dropped: 0 };
+    const now = typeof opts.now === 'number' ? opts.now : Date.now();
+    const kindCap = typeof opts.kindCap === 'number' ? opts.kindCap : DEFAULT_KIND_CAP;
+
+    let total = 0;
+    const survivors = []; // { m, line } in original order
+    for (const line of readFileSync(file, 'utf-8').split('\n')) {
+      if (!line.trim()) continue;
+      total++;
+      let m;
+      try {
+        m = JSON.parse(line);
+      } catch {
+        continue; // drop corrupt
+      }
+      if (!validateMemory(m).valid) continue; // drop schema-invalid
+      if (m.status && m.status !== 'active') continue; // drop non-active
+      if (m.expiresAt && Date.parse(m.expiresAt) <= now) continue; // drop expired
+      survivors.push({ m, line });
+    }
+
+    // Per-(kind, scope) cap.
+    const groups = new Map();
+    for (const s of survivors) {
+      const key = s.m.kind + '\x00' + s.m.scope;
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = []));
+      g.push(s);
+    }
+    const keep = new Set();
+    for (const g of groups.values()) {
+      if (g.length <= kindCap) {
+        for (const s of g) keep.add(s);
+        continue;
+      }
+      const ranked = [...g].sort((a, b) => {
+        const A = importanceKey(a.m);
+        const B = importanceKey(b.m);
+        if (A.conf !== B.conf) return B.conf - A.conf;
+        if (A.sev !== B.sev) return B.sev - A.sev;
+        return B.createdAt.localeCompare(A.createdAt); // newest first
+      });
+      for (const s of ranked.slice(0, kindCap)) keep.add(s);
+    }
+
+    const kept = survivors.filter((s) => keep.has(s));
+    const dropped = total - kept.length;
+    if (dropped > 0) {
+      const data = kept.length ? kept.map((s) => s.line).join('\n') + '\n' : '';
+      const tmp = file + '.tmp';
+      writeFileSync(tmp, data);
+      renameSync(tmp, file); // atomic swap so a crash can't truncate the store
+    }
+    return { kept: kept.length, dropped };
+  } catch (err) {
+    if (process.env.DEBUG) process.stderr.write('[memory-store] prune error: ' + err.message + '\n');
+    return { kept: 0, dropped: 0 };
+  }
 }
