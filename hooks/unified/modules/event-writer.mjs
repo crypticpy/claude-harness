@@ -144,6 +144,35 @@ export function readEvents(projectDir, { sessionId, sinceTs } = {}) {
 // Tool-event mirroring (called from rolling-log on PostToolUse)
 // =============================================================================
 
+// A runner only counts when it is the INVOKED command of a segment, not a word
+// that happens to appear in an echo or a filename — `echo "VITEST CONFIG"` and
+// `cat vitest.config.ts` must NOT classify as test runs.
+const TEST_RUNNERS = /^(?:vitest|jest|pytest|mocha|rspec|ava|playwright|phpunit)\b/;
+const LINT_RUNNERS = /^(?:eslint|tsc|prettier|ruff|mypy|flake8|clippy|gofmt|biome)\b/;
+
+function classifyBashCommand(command) {
+  // Inspect each command segment's leading executable so runner names buried in
+  // strings or paths don't trigger a (mis)classification.
+  const segments = (command || '').toLowerCase().split(/&&|\|\||[;\n|]/);
+  for (const raw of segments) {
+    // Strip leading env assignments (FOO=bar) and wrappers so the real
+    // executable surfaces first.
+    const seg = raw
+      .trim()
+      .replace(/^(?:\w+=\S+\s+)+/, '')
+      .replace(/^(?:sudo|command|time|env|nice|exec)\s+/, '');
+    // Package-manager subcommands: `npm test`, `go test`, `cargo test`, …
+    if (/^(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?(?:test|t)\b/.test(seg)) return 'test';
+    if (/^(?:go|cargo)\s+test\b/.test(seg)) return 'test';
+    if (/^(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?(?:lint|typecheck|tsc)\b/.test(seg)) return 'lint';
+    // Direct runner, optionally invoked via npx / yarn / pnpm / bun / npm exec.
+    const exec = seg.replace(/^(?:npx|npm\s+exec|yarn|pnpm|bun)\s+(?:run\s+)?/, '');
+    if (TEST_RUNNERS.test(exec)) return 'test';
+    if (LINT_RUNNERS.test(exec)) return 'lint';
+  }
+  return 'tool_call';
+}
+
 function classifyKind(toolName, command) {
   switch (toolName) {
     case 'Edit':
@@ -156,12 +185,8 @@ function classifyKind(toolName, command) {
     case 'NotebookRead':
       return 'read';
     case 'Bash':
-    case 'bash': {
-      const c = (command || '').toLowerCase();
-      if (/\b(vitest|jest|pytest|go test|cargo test|npm test|yarn test|rspec|mocha)\b/.test(c)) return 'test';
-      if (/\b(eslint|tsc|prettier|ruff|mypy|flake8|typecheck|lint|clippy|gofmt)\b/.test(c)) return 'lint';
-      return 'tool_call';
-    }
+    case 'bash':
+      return classifyBashCommand(command);
     default:
       return 'tool_call';
   }

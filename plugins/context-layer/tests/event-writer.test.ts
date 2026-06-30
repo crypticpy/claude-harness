@@ -145,6 +145,43 @@ describe("mirrorToolEvent", () => {
     expect(e.kind).toBe("test");
   });
 
+  it("classifies runners invoked at a command boundary, in any form", () => {
+    const kindOf = (command: string): string =>
+      (
+        mirrorToolEvent(
+          { session_id: "s", tool_name: "Bash", tool_input: { command } },
+          { projectDir },
+        ) as any
+      ).kind;
+    expect(kindOf("npm test")).toBe("test");
+    expect(kindOf("yarn test --watch")).toBe("test");
+    expect(kindOf("go test ./...")).toBe("test");
+    expect(kindOf("cargo test")).toBe("test");
+    expect(kindOf("pytest -q")).toBe("test");
+    expect(kindOf("npx playwright test")).toBe("test");
+    expect(kindOf("eslint . --fix")).toBe("lint");
+    expect(kindOf("npm run typecheck")).toBe("lint");
+  });
+
+  it("does NOT classify a runner name in an echo or filename as a test", () => {
+    const kindOf = (command: string): string =>
+      (
+        mirrorToolEvent(
+          { session_id: "s", tool_name: "Bash", tool_input: { command } },
+          { projectDir },
+        ) as any
+      ).kind;
+    // The bug: substring match counted these as test runs.
+    expect(
+      kindOf('command git status && echo "--- VITEST CONFIG ---" && ls'),
+    ).toBe("tool_call");
+    expect(kindOf("cat vitest.config.ts")).toBe("tool_call");
+    expect(kindOf("head -15 tests/session-checkpoint.test.ts")).toBe(
+      "tool_call",
+    );
+    expect(kindOf("npm run build")).toBe("tool_call");
+  });
+
   it("keeps the semantic kind but marks outcome=error on a failure", () => {
     const e: any = mirrorToolEvent(
       {
