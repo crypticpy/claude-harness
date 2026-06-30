@@ -51,7 +51,11 @@ export async function logOperation(event, config, apiKey) {
             if (readPuntaxConfig(config || {}, process.env).eventLedger.enabled) {
                 mirrorToolEvent(event, { projectDir: process.env.CLAUDE_PROJECT_DIR });
             }
-        } catch (_) {}
+        } catch (e) {
+            // Stays non-fatal, but surface under DEBUG: silently swallowing this
+            // hid event-mirroring outages (corrupt config, permission denied).
+            if (process.env.DEBUG) process.stderr.write('[rolling-log] event mirror failed: ' + e.message + '\n');
+        }
 
         // Track file edits specifically
         if (tool_name === 'Edit' || tool_name === 'Write') {
