@@ -29,8 +29,8 @@
   },
 
   "formatting": {
-    "enabled": true,
-    "comment": "Formatters run on PostToolUse for Write|Edit. Uses npx for JS/TS (no global install needed).",
+    "enabled": false,
+    "comment": "DISABLED: auto-format on every Write|Edit caused overhead (npx spawn per edit), surprise whole-file reformats (no repo .prettierrc, so prettier defaults fight the file's style), and stale-file churn. Run formatters manually instead. Flip to true only with a committed formatter config that matches the codebase.",
     "extensions": {
       ".ts": "npx --yes prettier --write",
       ".tsx": "npx --yes prettier --write",
