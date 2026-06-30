@@ -5,7 +5,10 @@ import * as path from "path";
 
 // The deterministic reducer is a hook-side ESM module one level up.
 // vitest.config.ts allows fs access to the repo root for this cross-runtime import.
-import { runReducer } from "../../../hooks/unified/modules/precompact-reducer.mjs";
+import {
+  runReducer,
+  deriveFocus,
+} from "../../../hooks/unified/modules/precompact-reducer.mjs";
 import {
   writeEvent,
   readEvents,
@@ -154,6 +157,11 @@ describe("precompact-reducer (event-ledger mode)", () => {
     expect(checkpoint.changedFiles).not.toContain("src/z.ts");
     expect(checkpoint.testsRun).toContain("vitest run");
     expect(typeof checkpoint.checkpointIndex).toBe("number");
+
+    // A "where was I" headline is synthesized and persisted with the checkpoint.
+    expect(typeof checkpoint.focus).toBe("string");
+    expect(checkpoint.focus).toContain("more"); // two changed files → "(+1 more)"
+    expect(checkpoint.focus).toContain("last test: vitest run");
   });
 
   it("falls back to the transcript stub when the ledger has no events", async () => {
@@ -198,5 +206,54 @@ describe("precompact-reducer (event-ledger mode)", () => {
     expect(checkpoint.source).toBe("transcript"); // no events for L3
     expect(readEvents(projectDir)).toHaveLength(0); // old event pruned
     expect(readMemories(projectDir)).toHaveLength(0); // expired memory pruned
+  });
+});
+
+describe("deriveFocus (deterministic 'where was I' headline)", () => {
+  it("returns undefined when nothing is in flight", () => {
+    expect(deriveFocus(null)).toBeUndefined();
+    expect(deriveFocus({})).toBeUndefined();
+    expect(deriveFocus({ workingFiles: [] })).toBeUndefined();
+  });
+
+  it("leads with a single file unqualified, multiple as (+N more)", () => {
+    expect(deriveFocus({ changedFiles: ["a.ts"] })).toBe("a.ts");
+    expect(deriveFocus({ changedFiles: ["a.ts", "b.ts", "c.ts"] })).toBe(
+      "a.ts (+2 more)",
+    );
+  });
+
+  it("prefers changedFiles over workingFiles", () => {
+    expect(
+      deriveFocus({ changedFiles: ["edited.ts"], workingFiles: ["read.ts"] }),
+    ).toBe("edited.ts");
+    // falls back to workingFiles when nothing changed
+    expect(deriveFocus({ workingFiles: ["read.ts"] })).toBe("read.ts");
+  });
+
+  it("composes files · open loops · last test · next action", () => {
+    const focus = deriveFocus({
+      changedFiles: ["a.ts", "b.ts"],
+      openLoops: ["wire handler", "add test"],
+      testsRun: ["unit", "vitest run"],
+      nextActions: ["ship it"],
+    });
+    expect(focus).toBe(
+      "a.ts (+1 more) · 2 open loops · last test: vitest run · → next: ship it",
+    );
+  });
+
+  it("surfaces recent errors only when there are no open loops", () => {
+    expect(
+      deriveFocus({ changedFiles: ["a.ts"], failures: ["boom", "bang"] }),
+    ).toBe("a.ts · 2 recent errors");
+    // open loops take precedence over the error count
+    expect(
+      deriveFocus({
+        changedFiles: ["a.ts"],
+        openLoops: ["loop"],
+        failures: ["boom"],
+      }),
+    ).toBe("a.ts · 1 open loop");
   });
 });

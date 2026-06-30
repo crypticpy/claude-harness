@@ -22,6 +22,8 @@ export interface Checkpoint {
   session_id?: string;
   source?: string;
   checkpointIndex?: number;
+  /** One-line "where was I" headline synthesized by the reducer (deriveFocus). */
+  focus?: string;
   workingFiles?: string[];
   changedFiles?: string[];
   symbolsTouched?: string[];
@@ -101,7 +103,7 @@ export async function sessionCheckpoint(
 export const sessionCheckpointToolDefinition = {
   name: "session_checkpoint",
   description:
-    "Return the latest deterministic session checkpoint (working/changed files, failures, open loops, next actions, risk) reduced from the event ledger. Use on resume to recover where work left off — no LLM, no token-heavy transcript replay.",
+    "Return the latest deterministic session checkpoint reduced from the event ledger. Read the `focus` field first — it's a one-line 'where was I' headline (in-flight files, open loops, last test, next action); the full record (working/changed files, failures, open loops, next actions, risk) follows. Use on resume to recover where work left off — no LLM, no token-heavy transcript replay.",
   inputSchema: {
     type: "object",
     properties: {

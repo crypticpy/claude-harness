@@ -40,6 +40,33 @@ function appendCheckpoint(projectDir, checkpoint) {
   appendFileSync(file, JSON.stringify(checkpoint) + '\n');
 }
 
+/**
+ * One-line, deterministic "where was I" headline synthesized from a checkpoint's
+ * arrays. Surfaced by the session_checkpoint tool so a resuming agent recovers
+ * the gist at a glance instead of reading every field. Returns undefined when
+ * there's nothing in flight. Works for both event- and transcript-sourced
+ * checkpoints (falls back across the equivalent field names).
+ */
+export function deriveFocus(cp) {
+  if (!cp || typeof cp !== 'object') return undefined;
+  const parts = [];
+  const files = (cp.changedFiles?.length ? cp.changedFiles : cp.workingFiles) || [];
+  if (files.length) {
+    parts.push(files.length > 1 ? `${files[0]} (+${files.length - 1} more)` : files[0]);
+  }
+  const loops = cp.openLoops || [];
+  if (loops.length) parts.push(`${loops.length} open loop${loops.length > 1 ? 's' : ''}`);
+  const tests = cp.testsRun || [];
+  if (tests.length) parts.push(`last test: ${tests[tests.length - 1]}`);
+  const errs = (cp.failures?.length ? cp.failures : cp.recentErrors) || [];
+  if (errs.length && !loops.length) {
+    parts.push(`${errs.length} recent error${errs.length > 1 ? 's' : ''}`);
+  }
+  const next = cp.nextActions || [];
+  if (next.length) parts.push(`→ next: ${next[0]}`);
+  return parts.length ? parts.join(' · ') : undefined;
+}
+
 /** Last checkpoint for this session (for index continuity + incremental sinceTs). */
 function lastCheckpoint(projectDir, sessionId) {
   const file = checkpointsFile(projectDir);
@@ -174,6 +201,8 @@ export async function runReducer(event, config) {
           source: 'events',
           ...reduceEvents(events, prev),
         };
+        const focus = deriveFocus(checkpoint);
+        if (focus) checkpoint.focus = focus;
         appendCheckpoint(projectDir, checkpoint);
         return checkpoint;
       }
@@ -183,6 +212,8 @@ export async function runReducer(event, config) {
     // 2. Transcript-signal fallback.
     const checkpoint = transcriptCheckpoint(event);
     if (checkpoint) {
+      const focus = deriveFocus(checkpoint);
+      if (focus) checkpoint.focus = focus;
       appendCheckpoint(projectDir, checkpoint);
       return checkpoint;
     }
