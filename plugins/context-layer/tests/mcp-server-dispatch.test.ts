@@ -77,3 +77,53 @@ describe("mcp-server dispatch — semantic_lookup outlineOnly (live wiring)", ()
     expect(parsed.lineCount).toBeGreaterThan(0);
   });
 });
+
+describe("mcp-server dispatch — symbol_context (live wiring)", () => {
+  // symbol_context had no dispatch coverage. These guard the case wiring end to
+  // end: the filePath arg reaching searchInFile, resolution, and serialization.
+  let symFile: string;
+  beforeEach(() => {
+    symFile = path.join(projectDir, "sym.ts");
+    fs.writeFileSync(
+      symFile,
+      [
+        "export interface Widget { id: number; }",
+        "export function makeWidget(input: Widget) { return input; }",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("resolves a symbol end-to-end through handleRequest", async () => {
+    const res = await handleRequest(
+      call("symbol_context", {
+        symbolName: "makeWidget",
+        filePath: symFile,
+        projectDir,
+      }),
+    );
+    const parsed = JSON.parse(textOf(res));
+    expect(parsed.name).toBe("makeWidget");
+    expect(parsed.kind).toBe("function");
+    expect(typeof parsed.signature).toBe("string");
+    expect(parsed.location.line).toBe(2); // makeWidget is on the 2nd line
+  });
+
+  it("accepts signatureOnly and returns a well-formed compact result", async () => {
+    // The flag is honored after resolution; the compact contract is that the
+    // token-heavy fields are never populated and the signature is preserved.
+    const res = await handleRequest(
+      call("symbol_context", {
+        symbolName: "makeWidget",
+        filePath: symFile,
+        projectDir,
+        signatureOnly: true,
+      }),
+    );
+    const parsed = JSON.parse(textOf(res));
+    expect(parsed.name).toBe("makeWidget");
+    expect(typeof parsed.signature).toBe("string");
+    expect(parsed.related).toEqual([]);
+    expect(parsed.documentation).toBe("");
+  });
+});
