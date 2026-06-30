@@ -335,9 +335,18 @@ const SEVERITY_RANK: Record<string, number> = {
   low: 0,
 };
 
+export interface PruneByReason {
+  corrupt: number;
+  invalid: number;
+  nonActive: number;
+  expired: number;
+  overCap: number;
+}
+
 export interface PruneMemoriesResult {
   kept: number;
   dropped: number;
+  byReason: PruneByReason;
 }
 
 /**
@@ -351,18 +360,28 @@ export interface PruneMemoriesResult {
  *   3. expired rows (expiresAt <= now)
  *   4. over-cap rows per (kind, scope): keep the newest `kindCap`; user-confirmed
  *      and higher-severity rows are preferred so durable user knowledge survives.
+ * Returns { kept, dropped, byReason } where byReason breaks the drops into
+ * { corrupt, invalid, nonActive, expired, overCap } for observability.
  */
 export function pruneMemories(
   projectDir: string,
   opts: { now?: number; kindCap?: number } = {},
 ): PruneMemoriesResult {
+  const zero = (): PruneByReason => ({
+    corrupt: 0,
+    invalid: 0,
+    nonActive: 0,
+    expired: 0,
+    overCap: 0,
+  });
   try {
     const file = memoriesPath(projectDir);
-    if (!fs.existsSync(file)) return { kept: 0, dropped: 0 };
+    if (!fs.existsSync(file)) return { kept: 0, dropped: 0, byReason: zero() };
     const now = typeof opts.now === "number" ? opts.now : Date.now();
     const kindCap =
       typeof opts.kindCap === "number" ? opts.kindCap : DEFAULT_KIND_CAP;
 
+    const byReason = zero();
     let total = 0;
     const survivors: Array<{ m: TypedMemory; line: string }> = [];
     for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
@@ -372,12 +391,22 @@ export function pruneMemories(
       try {
         parsed = JSON.parse(line);
       } catch {
+        byReason.corrupt++;
         continue; // drop corrupt
       }
-      if (!validateMemory(parsed).valid) continue; // drop schema-invalid
+      if (!validateMemory(parsed).valid) {
+        byReason.invalid++;
+        continue; // drop schema-invalid
+      }
       const m = parsed as TypedMemory;
-      if (m.status && m.status !== "active") continue; // drop non-active
-      if (m.expiresAt && Date.parse(m.expiresAt) <= now) continue; // drop expired
+      if (m.status && m.status !== "active") {
+        byReason.nonActive++;
+        continue; // drop non-active
+      }
+      if (m.expiresAt && Date.parse(m.expiresAt) <= now) {
+        byReason.expired++;
+        continue; // drop expired
+      }
       survivors.push({ m, line });
     }
 
@@ -411,6 +440,7 @@ export function pruneMemories(
     }
 
     const kept = survivors.filter((s) => keep.has(s));
+    byReason.overCap = survivors.length - kept.length;
     const dropped = total - kept.length;
     if (dropped > 0) {
       const data = kept.length ? kept.map((s) => s.line).join("\n") + "\n" : "";
@@ -418,8 +448,8 @@ export function pruneMemories(
       fs.writeFileSync(tmp, data);
       fs.renameSync(tmp, file); // atomic swap so a crash can't truncate the store
     }
-    return { kept: kept.length, dropped };
+    return { kept: kept.length, dropped, byReason };
   } catch {
-    return { kept: 0, dropped: 0 };
+    return { kept: 0, dropped: 0, byReason: zero() };
   }
 }

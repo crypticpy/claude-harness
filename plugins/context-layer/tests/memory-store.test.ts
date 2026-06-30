@@ -276,7 +276,28 @@ describe("pruneMemories — retention GC", () => {
   it("is a no-op (no rewrite) when nothing needs dropping", () => {
     appendMemory(dir, baseInput({ text: "only row" }));
     const res = pruneMemories(dir, { now: NOW });
-    expect(res).toEqual({ kept: 1, dropped: 0 });
+    expect(res.kept).toBe(1);
+    expect(res.dropped).toBe(0);
+    expect(res.byReason).toEqual({
+      corrupt: 0,
+      invalid: 0,
+      nonActive: 0,
+      expired: 0,
+      overCap: 0,
+    });
+  });
+
+  it("breaks dropped rows down by reason", () => {
+    appendMemory(dir, baseInput({ text: "keep active" }));
+    appendMemory(dir, baseInput({ text: "past expiry", expiresAt: past }));
+    appendMemory(dir, baseInput({ text: "superseded", status: "superseded" }));
+    fs.appendFileSync(memoriesPath(dir), "{not json\n");
+    const res = pruneMemories(dir, { now: NOW });
+    expect(res.byReason.expired).toBe(1);
+    expect(res.byReason.nonActive).toBe(1);
+    expect(res.byReason.corrupt).toBe(1);
+    expect(res.byReason.overCap).toBe(0);
+    expect(res.dropped).toBe(3);
   });
 
   it("caps per (kind, scope), preferring user-confirmed + higher severity", () => {

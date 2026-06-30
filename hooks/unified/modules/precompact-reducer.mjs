@@ -191,7 +191,13 @@ export async function runReducer(event, config) {
       const retentionDays = puntax.eventLedger.retentionDays;
       pruneEvents(projectDir, retentionDays);
       pruneCheckpoints(projectDir, retentionDays);
-      pruneMemories(projectDir);
+      const pruned = pruneMemories(projectDir);
+      if (process.env.DEBUG && pruned.dropped > 0) {
+        process.stderr.write(
+          '[memory-store] pruned ' + pruned.dropped + ' rows ' +
+            JSON.stringify(pruned.byReason) + '\n',
+        );
+      }
 
       if (events.length > 0) {
         const checkpoint = {
