@@ -62,6 +62,18 @@ export interface ImpactResult {
   suggestions: string[];
   /** Current LSP diagnostics for the target file (only set on the LSP path). */
   diagnostics?: Array<{ line: number; severity?: number; message: string }>;
+  /**
+   * Which tier produced this result and whether to trust it as exhaustive.
+   * `strategy`: "lsp" = real reference sites from the language server; "index" /
+   * "scan" = the code-map import graph (via the DB or a live file scan).
+   * `complete` is true only for the LSP tier — the import-graph tiers find files
+   * that IMPORT the target but miss usages that don't re-import it (same-file,
+   * dynamic, or via re-export), so treat their dependent list as import-level.
+   */
+  provenance: {
+    strategy: "lsp" | "index" | "scan";
+    complete: boolean;
+  };
   metadata: {
     totalFiles: number;
     filesSearched: number;
@@ -248,6 +260,7 @@ export async function checkImpact(
       dependents,
       riskLevel,
       suggestions,
+      provenance: { strategy: "scan", complete: false },
       metadata: {
         totalFiles: projectFiles.length,
         filesSearched: importMaps.length,
@@ -812,7 +825,7 @@ function generateSuggestions(
   // File count suggestions
   if (uniqueFiles.size > 0) {
     suggestions.push(
-      `Update ${uniqueFiles.size} file${uniqueFiles.size > 1 ? "s" : ""} that depend on this ${symbolName ? "symbol" : "file"}`,
+      `Update ${uniqueFiles.size} file${uniqueFiles.size > 1 ? "s" : ""} that depend${uniqueFiles.size > 1 ? "" : "s"} on this ${symbolName ? "symbol" : "file"}`,
     );
   }
 
@@ -946,6 +959,7 @@ async function impactFromLsp(
           message: d.message,
         }))
       : undefined,
+    provenance: { strategy: "lsp", complete: true },
     metadata: {
       totalFiles: fileSet.size,
       filesSearched: fileSet.size,
@@ -1007,6 +1021,7 @@ function impactFromIndex(
         dependents,
         riskLevel,
         suggestions,
+        provenance: { strategy: "index", complete: false },
         metadata: {
           totalFiles: pathById.size,
           filesSearched: pathById.size,

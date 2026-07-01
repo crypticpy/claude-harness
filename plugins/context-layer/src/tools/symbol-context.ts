@@ -76,6 +76,18 @@ export interface SymbolContextResult {
     line: number;
   };
   related: RelatedSymbol[];
+  /**
+   * Which tier resolved this symbol. `strategy`: "lsp" = language-server hover
+   * (types resolved + real docs); "index" = the code-map symbol table; "parse" =
+   * a live syntactic parse of the file. `complete` is true only for the LSP tier
+   * — the index/parse tiers give an accurate structural signature but do NOT
+   * resolve cross-file types or hover documentation. Stamped at the resolution
+   * boundary, so it is present on every tool output.
+   */
+  provenance?: {
+    strategy: "lsp" | "index" | "parse";
+    complete: boolean;
+  };
 }
 
 interface CachedParseResult {
@@ -110,6 +122,14 @@ export async function getSymbolContext(
   return result;
 }
 
+/** Stamp the resolving tier onto a result; only the LSP tier is `complete`. */
+function withProvenance(
+  r: SymbolContextResult,
+  strategy: "lsp" | "index" | "parse",
+): SymbolContextResult {
+  return { ...r, provenance: { strategy, complete: strategy === "lsp" } };
+}
+
 async function resolveSymbolContext(
   input: SymbolContextInput,
 ): Promise<SymbolContextResult | null> {
@@ -138,8 +158,9 @@ async function resolveSymbolContext(
       projectPath,
     );
     if (viaLsp) {
-      cache.set(cacheKey, viaLsp, "lsp_result", projectPath);
-      return viaLsp;
+      const stamped = withProvenance(viaLsp, "lsp");
+      cache.set(cacheKey, stamped, "lsp_result", projectPath);
+      return stamped;
     }
   }
 
@@ -148,8 +169,9 @@ async function resolveSymbolContext(
   if (codeMapEnabled()) {
     const indexed = symbolContextFromIndex(symbolName, filePath, projectPath);
     if (indexed) {
-      cache.set(cacheKey, indexed, "index_result", projectPath);
-      return indexed;
+      const stamped = withProvenance(indexed, "index");
+      cache.set(cacheKey, stamped, "index_result", projectPath);
+      return stamped;
     }
   }
 
@@ -165,7 +187,9 @@ async function resolveSymbolContext(
 
   if (result) {
     // Cache the result
-    cache.set(cacheKey, result, "search_result", projectPath);
+    const stamped = withProvenance(result, "parse");
+    cache.set(cacheKey, stamped, "search_result", projectPath);
+    return stamped;
   }
 
   return result;

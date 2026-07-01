@@ -44,6 +44,14 @@ describe("checkImpact — fallback scan covers .mjs/.cjs consumers", () => {
     expect(res.success).toBe(true);
     const deps = res.data!.dependents.map((d) => path.basename(d.filePath));
     expect(deps).toContain("rolling-log.mjs");
+    // Fallback scan (code-map off, no symbol) is the import-level tier.
+    expect(res.data!.provenance).toEqual({ strategy: "scan", complete: false });
+    // Exactly one dependent — subject/verb must agree: "file that depends".
+    expect(
+      res.data!.suggestions.some((s) =>
+        s.includes("1 file that depends on this file"),
+      ),
+    ).toBe(true);
   });
 
   it("resolves an extensionless import specifier to a .mjs target", async () => {

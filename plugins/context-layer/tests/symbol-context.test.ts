@@ -102,5 +102,7 @@ describe("getSymbolContext — related symbols from generic return types", () =>
     });
     expect(res).not.toBeNull();
     expect(res!.related.some((r) => r.name === "Widget")).toBe(true);
+    // AST tier (no LSP, no index): structural signature, not type-resolved.
+    expect(res!.provenance).toEqual({ strategy: "parse", complete: false });
   });
 });

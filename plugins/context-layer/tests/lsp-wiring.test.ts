@@ -72,6 +72,8 @@ describe("symbol_context — LSP tier", () => {
     expect(result!.documentation).toBe("mock hover text");
     // definition (range start line 2, 0-based) resolves to 1-based line 3
     expect(result!.location.line).toBe(3);
+    // LSP is the only type-resolved tier -> complete.
+    expect(result!.provenance).toEqual({ strategy: "lsp", complete: true });
   });
 });
 
@@ -92,5 +94,7 @@ describe("impact_check — LSP tier", () => {
     );
     // diagnostics are attached only on the LSP path
     expect(data.diagnostics?.[0]?.message).toBe("mock diagnostic");
+    // Reference-level tier: real usage sites -> complete.
+    expect(data.provenance).toEqual({ strategy: "lsp", complete: true });
   });
 });
