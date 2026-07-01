@@ -433,7 +433,7 @@ export async function puntaxContext(
 export const puntaxContextToolDefinition = {
   name: "puntax_context",
   description:
-    "Return the smallest relevant context block for the current task under a token budget. The PUNTAX primary tool — call before reaching for broad recall. Modes: prompt|pre_edit|resume|debug|review|architecture.",
+    "Assemble the smallest task-relevant context block (memories, file insights, exports) under a token budget — the router front door for context-gathering. Start here when you have a task but no specific target yet. When you already know the exact target, skip the router and call the primitive directly: semantic_lookup (a named file's summary), symbol_context (a named symbol's type/docs), code_map_outline (one file's structure), brain_search (an explicit memory-layer query). Modes: prompt|pre_edit|resume|debug|review|architecture.",
   inputSchema: {
     type: "object",
     properties: {

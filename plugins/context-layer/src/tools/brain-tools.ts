@@ -419,7 +419,7 @@ export const brainToolDefinitions = [
   {
     name: "brain_search",
     description:
-      "Search your persistent brain for lessons, file insights, conventions, hot files, and typed memories. Use this to recall what you learned in previous sessions.",
+      "Directly search your persistent brain (lessons, file insights, conventions, hot files, typed memories) with an explicit query — for recalling what you learned in previous sessions. Use this when you know what you're looking for; for task-scoped recall under a token budget, call puntax_context instead.",
     inputSchema: {
       type: "object",
       properties: {
