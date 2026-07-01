@@ -95,6 +95,30 @@ describe("LspServerManager", () => {
     expect(made).toBe(1);
   });
 
+  it("dedups concurrent spawns for one key (no double-spawn race)", async () => {
+    let made = 0;
+    const mgr = new LspServerManager({
+      isOnPath: (c) => c === "typescript-language-server",
+      createClient: (_s, onDiag) => {
+        made++;
+        return new FakeClient(onDiag);
+      },
+    });
+    // Two callers race before the first start() resolves (e.g. a boot warm and
+    // the first real symbol_context). Only one server must be spawned.
+    const [a, b] = await Promise.all([
+      mgr.getClient(ROOT, "typescript"),
+      mgr.getClient(ROOT, "typescript"),
+    ]);
+    expect(a).not.toBeNull();
+    expect(a).toBe(b);
+    expect(made).toBe(1);
+    // The in-flight entry is cleared on success; a later call reuses the cache.
+    const c = await mgr.getClient(ROOT, "typescript");
+    expect(c).toBe(a);
+    expect(made).toBe(1);
+  });
+
   it("does not retry a server that failed to start", async () => {
     let made = 0;
     const mgr = new LspServerManager({

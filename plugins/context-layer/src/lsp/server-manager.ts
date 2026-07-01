@@ -82,6 +82,7 @@ export interface ServerManagerOptions {
 
 export class LspServerManager {
   private readonly clients = new Map<string, ILspClient>();
+  private readonly starting = new Map<string, Promise<ILspClient | null>>();
   private readonly diagnostics = new Map<string, Map<string, Diagnostic[]>>();
   private readonly waiters = new Map<string, Array<() => void>>();
   private readonly failed = new Set<string>();
@@ -116,6 +117,27 @@ export class LspServerManager {
     if (existing && existing.isRunning) return existing;
     if (this.failed.has(key)) return null;
 
+    // Dedup concurrent spawns for the same key: the first caller registers the
+    // in-flight start promise; everyone else (e.g. a boot-time warm racing the
+    // first real call) awaits it instead of spawning a second language server.
+    const inFlight = this.starting.get(key);
+    if (inFlight) return inFlight;
+
+    const startPromise = this.spawnClient(key, spec, projectRoot);
+    this.starting.set(key, startPromise);
+    try {
+      return await startPromise;
+    } finally {
+      this.starting.delete(key);
+    }
+  }
+
+  /** Create + start one client for `key`, recording failure so it isn't retried. */
+  private async spawnClient(
+    key: string,
+    spec: ServerSpec,
+    projectRoot: string,
+  ): Promise<ILspClient | null> {
     const diagByUri = new Map<string, Diagnostic[]>();
     this.diagnostics.set(key, diagByUri);
 

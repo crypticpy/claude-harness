@@ -43,7 +43,7 @@ import {
   type MemoryWriteInput,
 } from "./tools";
 import { recordFileAccess } from "./learn";
-import { shutdownLsp } from "./lsp/lsp-service";
+import { shutdownLsp, warmLsp } from "./lsp/lsp-service";
 import { warmTreeSitter } from "./indexer/backends/tree-sitter";
 
 interface MCPRequest {
@@ -535,6 +535,13 @@ async function main() {
     output: process.stdout,
     terminal: false,
   });
+
+  // Background-warm the language server for the launch cwd so the first
+  // symbol_context / impact_check doesn't pay the ~500ms tsserver spawn inline.
+  // Fire-and-forget: unlike warmTreeSitter (whose grammars must be ready before
+  // the sync parse path runs), LSP is awaited lazily, so this must NOT block the
+  // readline loop. No-op when LSP is disabled or no server is installed.
+  void warmLsp(process.cwd());
 
   // Tear down any spawned language servers on signal-driven exit. Stdin EOF is
   // handled after the loop below; these cover Ctrl-C / kill.

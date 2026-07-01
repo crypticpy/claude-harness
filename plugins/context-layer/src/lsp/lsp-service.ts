@@ -10,6 +10,7 @@
  * across calls; `shutdownLsp()` tears them down on MCP-server exit.
  */
 
+import * as fs from "fs";
 import * as path from "path";
 
 import { loadPuntaxConfig } from "../config/puntax-config";
@@ -120,6 +121,50 @@ export async function lspDiagnostics(
     return res.success && res.data ? res.data : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * A representative TypeScript source file to seed tsserver's project load, or
+ * null if the project doesn't look like TS. Shallow (root + a few conventional
+ * source dirs) so the scan is a handful of readdirs, never a deep tree walk.
+ */
+function seedTsFile(root: string): string | null {
+  const dirs = [root, ...["src", "lib", "app"].map((d) => path.join(root, d))];
+  for (const dir of dirs) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.isFile() && /\.tsx?$/.test(e.name)) return path.join(dir, e.name);
+    }
+  }
+  return null;
+}
+
+/**
+ * Pre-warm the language server for a project in the background so the first
+ * symbol_context / impact_check doesn't pay tsserver's ~400ms cold start inline.
+ * Spawning the process is not enough — that cold cost is tsserver's one-time
+ * PROJECT LOAD, which only fires on the first real request — so we also issue a
+ * single documentSymbols against a representative file to trigger it in the
+ * background. Fire-and-forget and fail-open: a no-op when LSP is disabled, no
+ * server is on PATH, or the project isn't TypeScript. getClient() dedups, so the
+ * user's first real call shares this warm rather than racing a second spawn.
+ */
+export async function warmLsp(projectPath: string): Promise<void> {
+  if (!lspEnabled()) return;
+  try {
+    const root = lspRoot(projectPath);
+    const client = await getGlobalServerManager().getClient(root, "typescript");
+    if (!client) return;
+    const seed = seedTsFile(root);
+    if (seed) await lspDocumentSymbols(seed, root);
+  } catch {
+    // Best-effort warm — never surface a failure to the boot path.
   }
 }
 

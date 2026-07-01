@@ -176,6 +176,52 @@ describe("loadPuntaxConfig — disk loading", () => {
     expect(cfg.contextRouter.budgets.prompt).toBe(300);
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it("re-applies env overrides on a cache hit (parse memoized, env not)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "puntax-cfg-cache-"));
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        puntax: { contextRouter: { budgets: { prompt: 42 } }, lsp: { enabled: true } },
+      }),
+    );
+    // First load populates the raw-file cache.
+    const a = loadPuntaxConfig({ explicitPath: file, env: {} });
+    expect(a.contextRouter.budgets.prompt).toBe(42);
+    expect(a.lsp.enabled).toBe(true);
+    // Same file (cache hit — prompt still 42) but a live env override must win.
+    const b = loadPuntaxConfig({
+      explicitPath: file,
+      env: { PUNTAX_LSP: "false" },
+    });
+    expect(b.contextRouter.budgets.prompt).toBe(42);
+    expect(b.lsp.enabled).toBe(false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("busts the cache when the file content changes", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "puntax-cfg-bust-"));
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ puntax: { contextRouter: { budgets: { prompt: 42 } } } }),
+    );
+    expect(
+      loadPuntaxConfig({ explicitPath: file, env: {} }).contextRouter.budgets
+        .prompt,
+    ).toBe(42);
+    // Rewrite same path; the size key busts the cache even if mtime is coarse.
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ puntax: { contextRouter: { budgets: { prompt: 987654 } } } }),
+    );
+    expect(
+      loadPuntaxConfig({ explicitPath: file, env: {} }).contextRouter.budgets
+        .prompt,
+    ).toBe(987654);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("cross-runtime parity (.ts vs .mjs)", () => {

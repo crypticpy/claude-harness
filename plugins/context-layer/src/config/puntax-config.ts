@@ -205,6 +205,16 @@ export function configCandidatePaths(
   return candidates;
 }
 
+// Cache the raw parsed config file keyed by (path, mtimeMs, size). The MCP
+// server calls loadPuntaxConfig on every gate check (lspEnabled / codeMapEnabled
+// — 4+ per symbol_context), so re-reading + re-parsing an unchanged config.json
+// each time is pure waste. Env overrides are re-applied via readPuntaxConfig on
+// EVERY call, so a live PUNTAX_* change (and tests that mutate process.env) take
+// effect immediately — only the disk read + JSON.parse is memoized.
+let rawConfigCache:
+  | { path: string; mtimeMs: number; size: number; parsed: unknown }
+  | null = null;
+
 /**
  * Load and normalize PUNTAX config from disk. Reads the first readable candidate
  * config.json; falls back to DEFAULT_PUNTAX (with env overrides) if none parse.
@@ -221,12 +231,22 @@ export function loadPuntaxConfig(
 
   for (const p of paths) {
     try {
-      if (fs.existsSync(p)) {
-        const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
-        return readPuntaxConfig(parsed, env);
+      const st = fs.statSync(p); // throws if missing -> next candidate
+      let parsed: unknown;
+      if (
+        rawConfigCache &&
+        rawConfigCache.path === p &&
+        rawConfigCache.mtimeMs === st.mtimeMs &&
+        rawConfigCache.size === st.size
+      ) {
+        parsed = rawConfigCache.parsed;
+      } else {
+        parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+        rawConfigCache = { path: p, mtimeMs: st.mtimeMs, size: st.size, parsed };
       }
+      return readPuntaxConfig(parsed, env);
     } catch {
-      // Corrupt/unreadable candidate — try the next one.
+      // Missing/corrupt/unreadable candidate — try the next one.
     }
   }
   return readPuntaxConfig({}, env);
