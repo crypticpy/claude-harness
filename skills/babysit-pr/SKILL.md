@@ -68,7 +68,7 @@ AUTO_MERGE=<true|false> \
 bash ~/.claude/skills/babysit-pr/babysit.sh > /tmp/babysit-pr<N>.log 2>&1
 ```
 
-The script truncates `/tmp/babysit-pr<N>.events.jsonl` on start so each babysit run begins with a clean event queue.
+The script truncates `/tmp/babysit-pr<N>.events.jsonl` AND removes `/tmp/babysit-pr<N>.cursor` on start, so each babysit run begins with a clean event queue and a zeroed drain cursor (a stale cursor from a prior run on the same PR would otherwise make `/address-pr-comments` report "nothing new" forever).
 
 ### 5. Confirm to the user and exit this turn
 
@@ -96,12 +96,48 @@ If the user asks "what's happening with PR X" while a babysit is running, do thi
 2. Count outstanding events: `wc -l < /tmp/babysit-pr<N>.events.jsonl` minus the cursor offset (see `/address-pr-comments`)
 3. Report status concisely
 
+**Get PR status from the log, never from a fresh `gh` call.** While a babysit is
+running it already polls merge state, CI, and bot comments every tick into the
+log — that data is free to read. Firing your own `gh pr view` / `gh pr checks`
+on a babysat PR duplicates work AND adds to the burst that trips GitHub's
+secondary rate limit (see below). The log is the source of truth; `gh` is not.
+
+## GitHub API hygiene (avoid rate limits)
+
+The pain we hit is **secondary** rate limits, not the primary 5,000/hr budget.
+A diagnostic mid-session showed `core` at 8/5000 and `graphql` at 42/5000 — the
+hourly budget was barely touched. GitHub's *secondary* limit instead punishes
+**bursts and concurrency**: many `gh` calls fired back-to-back or in parallel in
+a few seconds. It returns 403 "you have exceeded a secondary rate limit / retry
+your request" even when the hourly budget is full.
+
+So the rule is **spread calls out, don't pile them up**:
+
+- **One source of truth per PR.** If a babysit is watching it, read the log; do
+  not also `gh pr view` it. Don't run two status-checking mechanisms on one PR.
+- **Don't batch `gh` calls.** Avoid issuing several `gh` calls in one shell block
+  or as parallel tool calls — that's the exact burst pattern the secondary limit
+  flags. Serialize them; let a beat pass between them.
+- **Trust `gh pr merge --auto`.** After arming auto-merge, don't fire a
+  confirmatory `gh pr view` — the merge command's own output already confirms.
+- **One babysit at a time** (matches the repo's "one PR in flight" rule). N
+  concurrent babysits = N× the per-tick burst against a shared limit.
+- **`gh api rate_limit` is free** (exempt from the limit), so it's safe to check
+  when diagnosing — but don't poll it in a loop.
+
+The script itself now cooperates: it polls **one** comment endpoint per tick in
+round-robin (not all three at once), uses `--paginate` on that call (a chatty PR
+pushes older comments past the 30-item first page — without it they're never
+seen), and backs off `RL_BACKOFF` seconds on any rate-limit error via the
+`gh_safe` wrapper. Keep those when editing it.
+
 ## Guardrails
 
 - **No agent recursion.** The bash script is dumb infrastructure — it does not call Claude or spawn sub-agents.
 - **Don't run on main/master.** This skill watches feature-branch PRs targeting main, not main itself.
 - **Don't bypass hook signatures or use `--no-verify`** anywhere in the merge call. The script uses `--squash --delete-branch` only.
 - **Repo must be authed to `gh`.** If `gh auth status` fails, stop and tell the user — do not retry blindly.
+- **Read the log for status; don't re-poll with `gh`.** See "GitHub API hygiene" above — duplicate polling is the main cause of the secondary-rate-limit 403s.
 
 ## Re-invoking on the same PR
 
