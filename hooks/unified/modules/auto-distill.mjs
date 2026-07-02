@@ -37,13 +37,27 @@ const OUTPUT_FILTERS = new Set([
  * Canonicalize a shell command so cosmetic output-plumbing doesn't fork one logical
  * command into many near-duplicate memories. `npx vitest run 2>&1 | tail -30`,
  * `npx vitest run > out.log`, and `npx vitest run` all collapse to `npx vitest run`.
- * Drops, in order: fd-dup redirects (`2>&1`), `&>file`, plain/append redirects
- * (`2>file`, `>file`, `>>file`), then trailing pipe stages into known output
- * filters. Leaves meaningful (non-filter) pipe stages intact. Pure + deterministic.
+ * Drops, in order: leading `echo … &&`/`echo … ;` banner segments (progress
+ * decoration, not part of the command — an echo containing an unquoted redirect
+ * is setup like `echo FOO=bar > .env`, and is kept), fd-dup redirects (`2>&1`),
+ * `&>file`, plain/append redirects (`2>file`, `>file`, `>>file`), then trailing
+ * pipe stages into known output filters. Leaves meaningful (non-filter) pipe
+ * stages intact. Pure + deterministic.
  */
 export function normalizeCommand(cmd) {
   let s = String(cmd == null ? '' : cmd).trim();
   if (!s) return '';
+  // Leading echo banners: `echo "=== suite ===" && npx vitest run` must dedup
+  // with `npx vitest run`. Runs BEFORE redirect stripping so an echo that
+  // writes a file (`echo FOO=bar > .env && npm test`) still has its redirect
+  // and is recognized as setup, not a banner — `<`/`>` are excluded from the
+  // unquoted banner-content class. Only LEADING segments joined by `&&`/`;`
+  // are dropped — an interior/trailing echo may be control flow
+  // (`make test || echo fail`).
+  for (let prev = null; prev !== s; ) {
+    prev = s;
+    s = s.replace(/^echo(?:\s+(?:"[^"]*"|'[^']*'|[^&;|<>])*)?(?:&&|;)\s*/, '');
+  }
   s = s
     .replace(/\s*\d*>&\d*/g, ' ')        // 2>&1, >&2
     .replace(/\s*&>>?\s*\S+/g, ' ')      // &>file, &>>file

@@ -30,6 +30,7 @@ import {
 import { ensureDir } from './storage-paths.mjs';
 import { readPuntaxConfig } from './puntax-config.mjs';
 import { pruneMemories } from './memory-store.mjs';
+import { normalizeCommand } from './auto-distill.mjs';
 
 const MIN_TOOL_CALLS = 5;
 const MAX_WORKING_FILES = 8;
@@ -220,12 +221,20 @@ export async function runReducer(event, config) {
       pruneEvents(projectDir, retentionDays);
       pruneCheckpoints(projectDir, retentionDays);
       // Quality filter, two composed predicates (memory-store stays agnostic):
-      //  1. Mis-tagged test_command rows: an older event classifier mis-tagged
-      //     compound shell lines (e.g. `cd x && git status`) as test_command.
-      //     The current classifier re-checks each row's text; anything that no
-      //     longer reads as a test was never a real test command. Legit single
-      //     or compound test commands (`npx vitest run`, `cd pkg && npm test`)
-      //     still classify as 'test' and survive.
+      //  1. Junk test_command rows — auto-distilled rows ONLY (provenance
+      //     source 'event'); user-written rows via memory_write are never
+      //     dropped here, matching predicate 2's philosophy. Two flavors:
+      //     (a) mis-tagged: an older event classifier tagged compound shell
+      //         lines (e.g. `cd x && git status`) as test_command. The current
+      //         classifier re-checks each row's text; anything that no longer
+      //         reads as a test was never a real test command. Legit single or
+      //         compound test commands (`npx vitest run`, `cd pkg && npm test`)
+      //         still classify as 'test' and survive.
+      //     (b) legacy un-normalized: rows written before normalizeCommand
+      //         (`npx vitest run 2>&1 | tail -30`, `echo "=== suite ===" && …`).
+      //         auto-distill only writes canonical text now, so a non-canonical
+      //         row is by definition stale — its canonical twin is (re)written
+      //         the next time the command actually runs.
       //  2. Never-recalled machine-distilled rows: >30 days old, zero
       //     memory_recall ledger events, auto-/llm-distilled provenance.
       //     User-written/confirmed rows are never dropped.
@@ -233,7 +242,9 @@ export async function runReducer(event, config) {
       const pruned = pruneMemories(projectDir, {
         dropJunk: (m) =>
           (m.kind === 'test_command' &&
-            classifyBashCommand(m.text || '') !== 'test') ||
+            m.provenance?.source === 'event' &&
+            (classifyBashCommand(m.text || '') !== 'test' ||
+              normalizeCommand(m.text || '') !== (m.text || ''))) ||
           isNeverRecalledJunk(m, recallCounts),
       });
       if (process.env.DEBUG && pruned.dropped > 0) {

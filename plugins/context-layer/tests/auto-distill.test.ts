@@ -122,6 +122,37 @@ describe("normalizeCommand — output-plumbing canonicalization", () => {
     expect(normalizeCommand(null as any)).toBe("");
     expect(normalizeCommand(undefined as any)).toBe("");
   });
+
+  it("strips leading echo banner segments only", () => {
+    expect(normalizeCommand('echo "=== suite ===" && npx vitest run')).toBe(
+      "npx vitest run",
+    );
+    expect(normalizeCommand("echo a && echo b && npm test")).toBe("npm test");
+    expect(normalizeCommand("echo hi; pytest -q")).toBe("pytest -q");
+    // Quoted control operators inside the banner don't confuse the strip.
+    expect(normalizeCommand('echo "a && b" && pytest -q')).toBe("pytest -q");
+    // Interior echo separates real stages of a compound line — leave it.
+    expect(normalizeCommand("npm run build && echo done && npx vitest run")).toBe(
+      "npm run build && echo done && npx vitest run",
+    );
+    // `echo` after `||` is control flow, not decoration.
+    expect(normalizeCommand("make test || echo fail")).toBe("make test || echo fail");
+    // `echo`-prefixed executables are not banners.
+    expect(normalizeCommand("echo-server && npm test")).toBe("echo-server && npm test");
+  });
+
+  it("keeps setup echoes — an unquoted redirect means the echo does work", () => {
+    // Writing a file is setup, not a banner; the echo segment survives (its
+    // redirect target is still stripped by the pre-existing redirect pass).
+    expect(normalizeCommand("echo FOO=bar > .env && npm test")).toBe(
+      "echo FOO=bar && npm test",
+    );
+    expect(normalizeCommand("echo data >> fixtures.txt && pytest -q")).toBe(
+      "echo data && pytest -q",
+    );
+    // A QUOTED angle bracket is content, not a redirect — still a banner.
+    expect(normalizeCommand('echo "a > b" && pytest -q')).toBe("pytest -q");
+  });
 });
 
 describe("runAutoDistill — writes typed memory, dedups, fail-open", () => {
