@@ -27,6 +27,13 @@
 #   0  PR merged (or already merged at startup)
 #   2  PR closed without merge
 #   3  fatal error (missing tools, bad inputs, gh failures past retry budget)
+#   4  merge-ready but AUTO_MERGE=false — awaiting a human merge decision
+#   5  merge-ready except for undrained comment events — run
+#      /address-pr-comments <PR>, then relaunch the babysit
+#
+# Exits 4 and 5 are deliberate: "needs action" must be a terminal state, not an
+# infinite loop. The caller runs this script as a background task and is only
+# notified when it EXITS — a loop that logs "blocked" forever is invisible.
 
 set -uo pipefail
 
@@ -57,10 +64,14 @@ RL_BACKOFF="${RL_BACKOFF:-120}"
 # exact burst shape GitHub's secondary rate limit punishes. Same TICK period
 # keeps them de-phased once offset. 0 disables (useful in tests).
 START_JITTER_MAX="${START_JITTER_MAX:-30}"
+# Consecutive merge-ready-but-undrained evaluations before exiting 5. Gives an
+# in-flight drain pass a few ticks to advance the cursor before we bail out.
+DRAIN_BLOCKED_MAX="${DRAIN_BLOCKED_MAX:-3}"
 
 STATE="${STATE_DIR}/pr-${PR}.json"
 DEADLINE=$(( $(date +%s) + CODEX_WINDOW_S ))
 QUIET_TICKS=0
+DRAIN_BLOCKED_TICKS=0
 GH_FAILURES=0
 TICK_COUNT=0
 SEEN_FILE=$(mktemp)
@@ -74,9 +85,14 @@ mkdir -p "$STATE_DIR"
 # report "no new comments" forever.
 rm -f "$CURSOR_FILE"
 # State file is read by /address-pr-comments, so include the fields it needs
-# (repo, branch, worktree, main) — not just the bookkeeping ones.
-printf '{"pr_number": %s, "started_at": "%s", "merged": false, "auto_merge": %s, "repo": "%s", "branch": "%s", "main": "%s", "worktree": "%s"}\n' \
-  "$PR" "$(date -u +%FT%TZ)" "$AUTO_MERGE" "$REPO" "$BRANCH" "$MAIN" "$WORKTREE" > "$STATE"
+# (repo, branch, worktree, main) — not just the bookkeeping ones. $1 is a
+# JSON-encoded status string (e.g. '"watching"', '"needs-drain"').
+STARTED_AT="$(date -u +%FT%TZ)"
+write_state() {
+  printf '{"pr_number": %s, "started_at": "%s", "merged": false, "status": %s, "auto_merge": %s, "repo": "%s", "branch": "%s", "main": "%s", "worktree": "%s"}\n' \
+    "$PR" "$STARTED_AT" "$1" "$AUTO_MERGE" "$REPO" "$BRANCH" "$MAIN" "$WORKTREE" > "$STATE"
+}
+write_state '"watching"'
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
@@ -201,8 +217,15 @@ while :; do
   fi
 
   log "tick: ci=[$ci_summary] mergeable=$mergeable quiet=$QUIET_TICKS past_deadline=$past_deadline"
+  # Keep the state file's mtime fresh — the duplicate-babysit guard in SKILL.md
+  # Step 3 treats mtime older than 5 min as "no babysit running".
+  touch "$STATE" 2>/dev/null || true
 
-  if [[ "$AUTO_MERGE" == "true" && "$past_deadline" -eq 1 && "$QUIET_TICKS" -ge 2 ]]; then
+  # Readiness is evaluated for BOTH auto-merge modes — AUTO_MERGE only decides
+  # what happens once the PR is ready (merge vs. exit 4). Keeping this outside
+  # the AUTO_MERGE gate is load-bearing: a --no-merge babysit that never
+  # evaluates readiness has no terminal state and sits green forever.
+  if [[ "$past_deadline" -eq 1 && "$QUIET_TICKS" -ge 2 ]]; then
     # Anything that hasn't completed yet (no conclusion AND not skipped/neutral) is "pending".
     pending=$(echo "$pr_state" | jq -r '.statusCheckRollup // [] | map(select(.conclusion == null and (.status == "PENDING" or .status == "IN_PROGRESS" or .status == "QUEUED"))) | length')
     # Anything that completed with a non-OK terminal state blocks the merge.
@@ -227,18 +250,36 @@ while :; do
     # Require an affirmative MERGEABLE — the old `!= CONFLICTING` gate let
     # UNKNOWN (GitHub still computing mergeability) through to a doomed merge
     # attempt. UNKNOWN resolves within a tick or two; just wait.
-    if [[ "$non_ok" == "0" && "$pending" == "0" && "$mergeable" == "MERGEABLE" && "$undrained" -le 0 ]]; then
-      log "Conditions met — squash-merging PR #$PR with --delete-branch"
-      if gh pr merge "$PR" --repo "$REPO" --squash --delete-branch 2>&1 | tee -a "/tmp/babysit-pr${PR}.log"; then
-        log "Merge command succeeded; will verify on next tick"
+    if [[ "$non_ok" == "0" && "$pending" == "0" && "$mergeable" == "MERGEABLE" ]]; then
+      if [[ "$undrained" -gt 0 ]]; then
+        # Merge-ready except for the comment queue. Count consecutive blocked
+        # evaluations, then EXIT so the caller's task notification fires —
+        # logging "blocked" into a file nobody reads is not a follow-up.
+        DRAIN_BLOCKED_TICKS=$(( DRAIN_BLOCKED_TICKS + 1 ))
+        log "merge blocked by $undrained undrained comment event(s) ($DRAIN_BLOCKED_TICKS/$DRAIN_BLOCKED_MAX before handoff)"
+        if [[ "$DRAIN_BLOCKED_TICKS" -ge "$DRAIN_BLOCKED_MAX" ]]; then
+          log "NEEDS ACTION: PR #$PR is merge-ready except for $undrained undrained comment event(s)."
+          log "Run /address-pr-comments $PR to drain, then relaunch /babysit-pr $PR."
+          write_state '"needs-drain"'
+          exit 5
+        fi
+      elif [[ "$AUTO_MERGE" == "true" ]]; then
+        DRAIN_BLOCKED_TICKS=0
+        log "Conditions met — squash-merging PR #$PR with --delete-branch"
+        if gh pr merge "$PR" --repo "$REPO" --squash --delete-branch 2>&1 | tee -a "/tmp/babysit-pr${PR}.log"; then
+          log "Merge command succeeded; will verify on next tick"
+        else
+          log "Merge command failed; will retry next tick"
+        fi
       else
-        log "Merge command failed; will retry next tick"
+        log "READY: PR #$PR is merge-ready (CI green, review quiet, queue drained) and AUTO_MERGE=false."
+        log "Merge with: gh pr merge $PR --repo $REPO --squash --delete-branch  (or relaunch /babysit-pr $PR without --no-merge)"
+        write_state '"ready-no-automerge"'
+        exit 4
       fi
     else
+      DRAIN_BLOCKED_TICKS=0
       log "Not ready: non_ok=$non_ok pending=$pending mergeable=$mergeable undrained=$undrained. Waiting."
-      if [[ "$undrained" -gt 0 ]]; then
-        log "merge blocked by $undrained undrained comment event(s) — run /address-pr-comments $PR to drain"
-      fi
     fi
   fi
 

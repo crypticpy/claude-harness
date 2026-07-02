@@ -124,11 +124,13 @@ echo $total > /tmp/babysit-pr<N>.cursor
 
 Advancing the cursor is what unblocks the babysit's merge gate — it refuses to merge while undrained events exist (even pure noise), so always complete this step.
 
+Then check whether the babysit is still alive: if the state file says `"status": "needs-drain"`, the babysit already exited (code 5) waiting for this drain — relaunch it per the babysit-pr skill's Step 4 so the merge can complete. If the babysit is still running, leave it alone; it picks up the advanced cursor on its next tick.
+
 Report to the user, in a single message:
 
 - N events processed (out of M total)
 - Per-event: `agree → pushed <sha>` / `disagree → replied to <id>` / `noise → dismissed`
-- The babysit task is still running (don't stop it)
+- Babysit status: still running (left alone) or exited needs-drain (relaunched)
 - If `--dry-run` was passed, NONE of the side effects happen — just print the classification table
 
 ### Failure handling

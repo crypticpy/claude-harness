@@ -18,7 +18,7 @@ description: >
 
 ```
 /babysit-pr <pr-number>            # watch + auto-merge when clean (default)
-/babysit-pr <pr-number> --no-merge # watch + report ready, maintainer merges
+/babysit-pr <pr-number> --no-merge # watch + exit 4 when ready, maintainer merges
 ```
 
 If the user types `/babysit-pr` without a number, ask which PR — don't guess.
@@ -79,11 +79,13 @@ Do NOT poll the PR yourself, do NOT call `ScheduleWakeup`, do NOT spawn addition
 
 ## When the script terminates
 
-The harness delivers a task notification with the script's exit code:
+The script exits whenever the PR reaches a state it can't advance on its own — "needs action" is a terminal state, not an infinite loop, because the harness only notifies you when the process EXITS. The task notification carries the exit code:
 
 - **Exit 0** — PR merged, worktree + branch cleaned up, state file marked `merged: true`. Surface the success to the user.
 - **Exit 2** — PR closed without merge. Tell the user.
 - **Exit 3** — fatal error (missing tool, bad env). Read the log and surface the error.
+- **Exit 4** — merge-ready (CI green, review quiet, queue drained) but `--no-merge` was set. Tell the user the PR is ready and give them the merge command from the log's final lines; do not merge it yourself.
+- **Exit 5** — merge-ready except for undrained comment events (state file says `"status": "needs-drain"`). Run `/address-pr-comments <N>` to drain the queue, then relaunch the babysit (Step 4) to finish the merge. This is the expected mid-flight handoff, not an error.
 
 Also tail the last ~30 lines of `/tmp/babysit-pr<N>.log` so the user sees the final ticks.
 
@@ -91,7 +93,7 @@ Also tail the last ~30 lines of `/tmp/babysit-pr<N>.log` so the user sees the fi
 
 When the script logs `NEW [<endpoint>] <user>: <snippet>`, it also writes a JSON event to `/tmp/babysit-pr<N>.events.jsonl`. The main session does NOT auto-react — `/address-pr-comments <N>` is the entry point for processing those events.
 
-**Draining is load-bearing**: the merge gate requires the event queue to be fully drained (cursor == queue length), not merely quiet — quiet ticks measure bot *silence*, not whether feedback was *handled*. Every comment event, including pure noise, blocks the merge until a drain pass advances the cursor. When the log says `merge blocked by N undrained comment event(s)`, run `/address-pr-comments <N>`.
+**Draining is load-bearing**: the merge gate requires the event queue to be fully drained (cursor == queue length), not merely quiet — quiet ticks measure bot *silence*, not whether feedback was *handled*. Every comment event, including pure noise, blocks the merge until a drain pass advances the cursor. If the PR is otherwise merge-ready and stays blocked on the queue for `DRAIN_BLOCKED_MAX` (default 3) consecutive ticks, the script exits 5 to hand off — run `/address-pr-comments <N>`, then relaunch the babysit.
 
 If the user asks "what's happening with PR X" while a babysit is running, do this:
 
