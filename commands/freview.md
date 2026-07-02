@@ -6,38 +6,43 @@ You are running a final review of the current session's work.
 
 ## Step 1: Identify scope
 
-Load the session context:
-
-```
-Read: .claude/tasks/session-current.md
-```
-
-If that file does not exist, fall back to git:
+Scope comes from git — you already know what this session changed; git tells you exactly what state it's in:
 
 ```bash
-git diff --name-only HEAD
-git log --oneline -5
+git status --short          # uncommitted work (staged + unstaged + untracked)
+git diff --stat HEAD        # per-file churn for the uncommitted work
+git log --oneline -10       # commits this session may have already made
 ```
 
-List the files changed. If the list is empty, stop and report "No changes to review."
+- **Uncommitted changes exist** → scope is the uncommitted diff (`git diff HEAD`), plus any files this session committed earlier.
+- **Tree is clean** → scope is the commits made this session: `git diff --stat <base>..HEAD` where `<base>` is the last commit before this session's work began. You know which commits are yours from the conversation; if genuinely ambiguous, ask the user rather than guessing a base.
+
+Assemble: the explicit file list, the per-file `--stat` churn counts, and a 1–2 sentence statement of what the session's change set out to do (you know this from the conversation — the agents don't).
+
+If the file list is empty, stop and report "No changes to review."
 
 ## Step 2: Spawn both agents in parallel
 
 Issue a single message with two Task tool calls so they run concurrently.
 
+Both prompts must carry the context you assembled in Step 1 — the agents start blind; a bare "review the changes" prompt makes them re-derive scope and miss intent.
+
 ### Task 1 — `final-review-completeness`
 
 ```
-Scope: the files changed in this session (list them explicitly in the prompt).
-Read .claude/tasks/session-current.md for context if it exists.
+Intent: <1–2 sentences — what this change set out to do>.
+Scope: exactly these files (with churn): <file — +A/-D> per line.
+Whether committed or uncommitted, and the diff command that reproduces the change set.
 Produce the completeness report per your agent spec. Do not edit files.
 ```
 
 ### Task 2 — `principal-code-reviewer`
 
 ```
-Scope: the diff for the files changed in this session (list them explicitly in the prompt).
-Read .claude/tasks/session-current.md and CLAUDE.md for project context.
+Intent: <1–2 sentences — what this change set out to do>.
+Scope: the diff for exactly these files (with churn): <file — +A/-D> per line, and the diff command that reproduces it.
+Verification priorities: name the highest-risk files first — auth/input-handling/payment code, public API surface changes, cross-runtime twins (.ts/.mjs pairs), anything with heavy churn — and tell the agent to verify those before the rest.
+Read CLAUDE.md for project conventions.
 Produce the review report per your agent spec. Do not edit files.
 ```
 

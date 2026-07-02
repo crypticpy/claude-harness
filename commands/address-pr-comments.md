@@ -36,6 +36,8 @@ total=$(wc -l < /tmp/babysit-pr<N>.events.jsonl)
 cursor=$(cat /tmp/babysit-pr<N>.cursor 2>/dev/null || echo 0)
 ```
 
+If `cursor > total`, the cursor is stale — it belongs to a previous babysit run whose queue was longer (the script truncates the events file and removes the cursor on start, but a cursor written *after* that reset by an old drain can still outlive it). Reset `cursor=0` and process the whole queue.
+
 If `total == cursor`, nothing new. Tell the user "no new comments since last drain" and exit.
 
 Otherwise tail the new lines: `tail -n +$((cursor + 1)) /tmp/babysit-pr<N>.events.jsonl`.
@@ -77,7 +79,7 @@ When unsure between agree and disagree, **err on the side of the bot being right
 
    Addresses <reviewer-bot> review on PR #<N>.
 
-   Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+   Co-Authored-By: <the exact co-author trailer your harness instructions specify for the current model — do not hardcode an older model name>
    ```
 
 5. Push: `git push` (no -u flag, upstream already set)
@@ -134,7 +136,8 @@ Report to the user, in a single message:
 
 ## Guardrails
 
-- **Never push to a branch other than the PR's head branch.** Read it from the state file or `gh pr view`.
+- **Read the babysit log for PR status, never a fresh `gh` call.** The running babysit already polls merge state, CI, and comments every tick into `/tmp/babysit-pr<N>.log`. The only `gh api` calls this command should make are fetching the specific comment bodies being drained (serialized, one at a time — not batched/parallel) and posting replies. Extra `gh pr view`/`gh pr checks` calls are the burst pattern that trips GitHub's secondary rate limit (see the babysit-pr skill's "GitHub API hygiene").
+- **Never push to a branch other than the PR's head branch.** Read it from the state file.
 - **Never close the PR** based on a comment.
 - **Never resolve a review thread you didn't address** — that's lying to the reviewers.
 - **Never post the same reply twice** — the cursor protects against duplicate processing, but if a comment posting failed and you retry, check `gh api repos/<REPO>/pulls/<N>/comments/<id>/replies` to confirm yours isn't already there.

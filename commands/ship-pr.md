@@ -113,6 +113,8 @@ In the worktree (or current dir if branch was already feature):
 
 If validation fails, **fix the problem before pushing** — never `--no-verify`.
 
+**Review gate**: if the change modifies **≥6 files**, or touches **auth, input handling, or payments** (any file count), run `/freview` now — before the commit leaves the machine — and fix any blockers it reports. Smaller changes skip this; the edit-hook self-check is sufficient. This mirrors the repo CLAUDE.md review-gate rule: catching a blocker pre-push costs one local fix; catching it post-push costs a review cycle on the PR.
+
 ### 7. Stage, commit, push
 
 Stage **specific files** (the ones you actually changed). Never `git add -A` or `git add .`.
@@ -124,7 +126,7 @@ git -C <worktree-or-cwd> commit -m "$(cat <<'EOF'
 
 <optional body — short, why-not-what>
 
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+Co-Authored-By: <the exact co-author trailer your harness instructions specify for the current model — do not hardcode an older model name>
 EOF
 )"
 git -C <worktree-or-cwd> push -u origin <branch>
