@@ -536,8 +536,11 @@ async function synthesize(aggregated, config) {
         { via: 'deep-retrospective' },
     );
 
+    // Synthesis reads the whole cross-session aggregation — a headless
+    // `claude -p` run on it reliably needs >60s (ETIMEDOUT at 60s was why no
+    // .md report was ever generated). This runs ~every 50 sessions; be generous.
     return await callLlm(null, llmConfig, prompt, {
-        timeoutMs: 60_000,
+        timeoutMs: 240_000,
         title: 'Claude Code Deep Retrospective',
         temperature: 0.5,
     });
@@ -680,16 +683,14 @@ export async function retrospective(config) {
             success: false,
             message: `LLM synthesis failed (${err.message}), but raw data saved to ${rawPath}`,
             reportPath: rawPath,
-            aggregated,
         };
     }
 
     if (!result) {
         return {
             success: false,
-            message: 'LLM returned no analysis.',
+            message: 'LLM returned no analysis (re-run with DEBUG=1 to see why claude -p failed).',
             reportPath: null,
-            aggregated,
         };
     }
 

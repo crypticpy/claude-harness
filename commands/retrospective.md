@@ -10,13 +10,16 @@ You are running the periodic cross-session retrospective. Use this ~every 50 ses
 echo '{}' | node ~/.claude/hooks/unified/unified-hook.mjs retrospective
 ```
 
-Expect 30–60 seconds. If the module returns `success: false`, report the reason and stop.
+Expect 1–4 minutes (the synthesis LLM call reads the whole cross-session aggregation) — set the Bash timeout to at least 300000 ms. The command prints a JSON result whose `reportPath` field is the file to read next.
+
+If it returns `success: false`:
+
+- `reportPath` pointing at `retrospective-raw-*.json` means LLM synthesis failed but the raw aggregation was saved. Report the failure message and offer to re-run once (a transient LLM failure is the common cause). Do not present the raw JSON as if it were the report.
+- Otherwise report the `message` and stop.
 
 ## Step 2: Read the report
 
-```
-~/.claude/hooks/unified/evolution/retrospective-YYYY-MM-DD.md
-```
+Read the markdown file at the `reportPath` from Step 1's output (`retrospective-<date>.md`). Take the path from the result — do not reconstruct the filename from today's date.
 
 ## Step 3: Present
 
