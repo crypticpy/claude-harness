@@ -2,18 +2,17 @@
  * Symbol Context Tool
  *
  * Gets type information and documentation for any symbol without reading the full file.
- * Uses the LSP cache for performance and parses files on demand if not cached.
+ * Uses the result cache for performance and parses files on demand if not cached.
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import {
-  LSPCache,
+  ResultCache,
   getGlobalCache,
   computeFileHash,
   generateSymbolSearchCacheKey,
-  DEFAULT_LSP_CONFIG,
-} from "../lsp";
+} from "./result-cache";
 import {
   parseFile,
   ParseResult,
@@ -21,6 +20,11 @@ import {
   ClassInfo,
   TypeInfo,
 } from "../indexer";
+import { getLanguageFromExtension } from "../indexer/parser";
+import {
+  warmTreeSitter,
+  readyTreeSitterBackend,
+} from "../indexer/backends/tree-sitter";
 import {
   codeMapEnabled,
   projectRoot,
@@ -29,12 +33,6 @@ import {
   ensureProjectIndexed,
   refreshFile,
 } from "../indexer/code-map-service";
-import {
-  lspEnabled,
-  lspDocumentSymbols,
-  lspDefinition,
-  lspHover,
-} from "../lsp/lsp-service";
 import {
   CodeMap,
   projectIdFor,
@@ -77,15 +75,16 @@ export interface SymbolContextResult {
   };
   related: RelatedSymbol[];
   /**
-   * Which tier resolved this symbol. `strategy`: "lsp" = language-server hover
-   * (types resolved + real docs); "index" = the code-map symbol table; "parse" =
-   * a live syntactic parse of the file. `complete` is true only for the LSP tier
-   * — the index/parse tiers give an accurate structural signature but do NOT
-   * resolve cross-file types or hover documentation. Stamped at the resolution
-   * boundary, so it is present on every tool output.
+   * Which tier resolved this symbol. `strategy`: "index" = the code-map symbol
+   * table; "parse" = a live syntactic parse of the file (tree-sitter, or the
+   * regex parser as the last fallback). `complete` is ALWAYS false — these
+   * tiers give an accurate structural signature but do NOT resolve cross-file
+   * types. For type-resolved answers use the built-in LSP tool (hover /
+   * findReferences). Stamped at the resolution boundary, so it is present on
+   * every tool output.
    */
   provenance?: {
-    strategy: "lsp" | "index" | "parse";
+    strategy: "index" | "parse";
     complete: boolean;
   };
 }
@@ -101,6 +100,33 @@ interface CachedParseResult {
 
 const SYMBOL_CONTEXT_CACHE_KEY_PREFIX = "symbol_context";
 const FILE_PARSE_CACHE_KEY_PREFIX = "file_parse";
+
+// Project-search bounds for the parse fallback (formerly DEFAULT_LSP_CONFIG).
+const MAX_FILES_TO_SEARCH = 500;
+const SEARCH_EXCLUDE_DIRS = [
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "__pycache__",
+  "target",
+  ".venv",
+  "venv",
+];
+const SEARCH_INCLUDE_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".py",
+  ".rs",
+  ".go",
+  ".java",
+  ".c",
+  ".cpp",
+  ".h",
+  ".hpp",
+];
 
 // ============================================================================
 // Main Function
@@ -122,12 +148,15 @@ export async function getSymbolContext(
   return result;
 }
 
-/** Stamp the resolving tier onto a result; only the LSP tier is `complete`. */
+/**
+ * Stamp the resolving tier onto a result. Never `complete` — structural tiers
+ * can't prove cross-file type resolution (that's the built-in LSP tool's job).
+ */
 function withProvenance(
   r: SymbolContextResult,
-  strategy: "lsp" | "index" | "parse",
+  strategy: "index" | "parse",
 ): SymbolContextResult {
-  return { ...r, provenance: { strategy, complete: strategy === "lsp" } };
+  return { ...r, provenance: { strategy, complete: false } };
 }
 
 async function resolveSymbolContext(
@@ -148,22 +177,6 @@ async function resolveSymbolContext(
     return cached;
   }
 
-  // LSP tier (docs/06 Tier 1): when enabled and a defining file is known, ask
-  // the language server for the symbol's span + hover signature. Highest
-  // confidence; falls through on any miss (no server, symbol not found).
-  if (filePath && lspEnabled()) {
-    const viaLsp = await symbolContextFromLsp(
-      symbolName,
-      filePath,
-      projectPath,
-    );
-    if (viaLsp) {
-      const stamped = withProvenance(viaLsp, "lsp");
-      cache.set(cacheKey, stamped, "lsp_result", projectPath);
-      return stamped;
-    }
-  }
-
   // Index-first tier (code-map): answer from the symbol table without scanning
   // the project, when the defining file is fresh. Falls through on any miss.
   if (codeMapEnabled()) {
@@ -178,8 +191,18 @@ async function resolveSymbolContext(
   let result: SymbolContextResult | null = null;
 
   if (filePath) {
-    // Search in specific file
-    result = await searchInFile(symbolName, filePath, cache);
+    // On-demand tree-sitter parse of the defining file: real AST spans and a
+    // literal declaration signature. Falls through when no grammar covers the
+    // language or the symbol isn't found.
+    result = await symbolContextFromTreeSitter(
+      symbolName,
+      filePath,
+      projectPath,
+    );
+    // Regex-parser fallback (existing tier).
+    if (!result) {
+      result = await searchInFile(symbolName, filePath, cache);
+    }
   } else {
     // Search project for symbol definition
     result = await searchProject(symbolName, projectPath, cache);
@@ -205,7 +228,7 @@ async function resolveSymbolContext(
 async function searchInFile(
   symbolName: string,
   filePath: string,
-  cache: LSPCache,
+  cache: ResultCache,
 ): Promise<SymbolContextResult | null> {
   const parseResult = await getCachedParseResult(filePath, cache);
   if (!parseResult) {
@@ -220,7 +243,7 @@ async function searchInFile(
  */
 async function getCachedParseResult(
   filePath: string,
-  cache: LSPCache,
+  cache: ResultCache,
 ): Promise<ParseResult | null> {
   try {
     if (!fs.existsSync(filePath)) {
@@ -260,7 +283,7 @@ async function getCachedParseResult(
 async function searchProject(
   symbolName: string,
   projectPath: string,
-  cache: LSPCache,
+  cache: ResultCache,
 ): Promise<SymbolContextResult | null> {
   const files = collectSourceFiles(projectPath);
 
@@ -282,11 +305,11 @@ async function searchProject(
  */
 function collectSourceFiles(
   projectPath: string,
-  maxFiles: number = DEFAULT_LSP_CONFIG.maxFilesToSearch,
+  maxFiles: number = MAX_FILES_TO_SEARCH,
 ): string[] {
   const files: string[] = [];
-  const excludeDirs = new Set(DEFAULT_LSP_CONFIG.excludeDirs);
-  const includeExtensions = new Set(DEFAULT_LSP_CONFIG.includeExtensions);
+  const excludeDirs = new Set(SEARCH_EXCLUDE_DIRS);
+  const includeExtensions = new Set(SEARCH_INCLUDE_EXTENSIONS);
 
   function walk(dir: string): void {
     if (files.length >= maxFiles) return;
@@ -734,50 +757,203 @@ function mapSymbolKind(kind: string): SymbolKind {
   }
 }
 
+// ============================================================================
+// Literal declaration extraction (signature + leading doc comment)
+// ============================================================================
+
 /**
- * Resolve a symbol via the LSP tier: locate it in the file's document symbols,
- * then hover its declaration for signature/type info. Returns null on any miss
- * (server unavailable, symbol absent) so the caller falls back to lower tiers.
+ * Literal declaration signature read straight from source: join lines starting
+ * at the declaration until the first top-level `{` or `;` (TS) or the `:`
+ * ending a Python def/class header, cap at 5 lines, collapse whitespace.
+ * Depth-tracked so a `{`/`:` inside a parameter list doesn't cut the header.
+ * Returns null when the span is out of range or nothing was collected.
  */
-async function symbolContextFromLsp(
+function declarationSignature(
+  content: string,
+  startLine: number,
+  language: string,
+): string | null {
+  const lines = content.split("\n");
+  if (startLine < 1 || startLine > lines.length) return null;
+  const isPython = language === "python";
+  const cap = Math.min(startLine - 1 + 5, lines.length);
+  let collected = "";
+  let depth = 0;
+  for (let i = startLine - 1; i < cap; i++) {
+    const line = lines[i];
+    let cut = -1;
+    for (let j = 0; j < line.length; j++) {
+      const ch = line[j];
+      if (ch === "(" || ch === "[" || ch === "<") depth++;
+      else if (ch === ")" || ch === "]" || ch === ">") {
+        depth = Math.max(0, depth - 1);
+      } else if (!isPython && depth === 0 && ch === "{") {
+        cut = j; // exclude the body-opening brace
+        break;
+      } else if (!isPython && depth === 0 && ch === ";") {
+        cut = j + 1; // include the terminating semicolon
+        break;
+      } else if (isPython && depth === 0 && ch === ":") {
+        cut = j + 1; // include the header-ending colon
+        break;
+      }
+    }
+    collected += (collected ? " " : "") + (cut === -1 ? line : line.slice(0, cut));
+    if (cut !== -1) break;
+  }
+  const signature = collected.replace(/\s+/g, " ").trim();
+  return signature.length > 0 ? signature : null;
+}
+
+/**
+ * The contiguous comment block immediately preceding a declaration (`/** *\/`,
+ * `//`, or `#` styles), or "" when the line above is not a comment.
+ */
+function leadingCommentBlock(content: string, startLine: number): string {
+  const lines = content.split("\n");
+  let i = startLine - 2; // 0-based index of the line above the declaration
+  if (i < 0 || i >= lines.length) return "";
+
+  const block: string[] = [];
+  const above = lines[i].trim();
+  if (above.endsWith("*/")) {
+    // Walk up to the /* or /** opener, inclusive.
+    for (; i >= 0; i--) {
+      const t = lines[i].trim();
+      block.unshift(t);
+      if (t.startsWith("/*")) break;
+    }
+    if (i < 0) return ""; // unterminated walk — not a well-formed block
+  } else if (above.startsWith("//") || above.startsWith("#")) {
+    const marker = above.startsWith("//") ? "//" : "#";
+    for (; i >= 0; i--) {
+      const t = lines[i].trim();
+      if (!t.startsWith(marker)) break;
+      block.unshift(t);
+    }
+  } else {
+    return "";
+  }
+
+  return block
+    .map((l) =>
+      l
+        .replace(/^\/\*\*?/, "")
+        .replace(/\*\/$/, "")
+        .replace(/^\*\s?/, "")
+        .replace(/^\/\/\s?/, "")
+        .replace(/^#\s?/, "")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Derive related types from a function's literal signature text: parameter
+ * annotations become "uses", the return annotation (`: T` / `-> T`) "returns".
+ * Best-effort — a fail-open enrichment for the structural tiers, which have no
+ * type resolver.
+ */
+function relatedTypesFromSignature(signature: string): RelatedSymbol[] {
+  const open = signature.indexOf("(");
+  if (open === -1) return [];
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < signature.length; i++) {
+    const ch = signature[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close === -1) return [];
+
+  const related: RelatedSymbol[] = [];
+  for (const param of splitTypeArgs(signature.slice(open + 1, close))) {
+    const colon = param.indexOf(":");
+    if (colon === -1) continue;
+    const typeName = extractTypeName(param.slice(colon + 1).trim());
+    if (typeName && !isPrimitiveType(typeName)) {
+      related.push({ name: typeName, relationship: "uses" });
+    }
+  }
+
+  const retMatch = signature.slice(close + 1).match(/^\s*(?::|->)\s*(.+)$/);
+  if (retMatch) {
+    const typeName = extractTypeName(retMatch[1].trim());
+    if (typeName && !isPrimitiveType(typeName)) {
+      related.push({ name: typeName, relationship: "returns" });
+    }
+  }
+
+  return deduplicateRelated(related);
+}
+
+/**
+ * On-demand tree-sitter tier: parse the defining file against the warmed
+ * grammars and answer from the real AST — precise spans, a literal declaration
+ * signature, and extends/implements relations. Returns null on any miss
+ * (grammar unavailable, unsupported language, symbol absent) so the caller
+ * falls back to the regex parser.
+ */
+async function symbolContextFromTreeSitter(
   symbolName: string,
   filePath: string,
   projectPath: string,
 ): Promise<SymbolContextResult | null> {
-  const root = projectRoot(projectPath);
-  const absFile = path.resolve(projectPath, filePath);
+  try {
+    const backend = readyTreeSitterBackend() ?? (await warmTreeSitter());
+    if (!backend) return null;
 
-  const symbols = await lspDocumentSymbols(absFile, root);
-  if (!symbols || symbols.length === 0) return null;
+    const absFile = path.resolve(projectPath, filePath);
+    const language = getLanguageFromExtension(
+      path.extname(absFile).toLowerCase(),
+    );
+    if (!backend.supports(language)) return null;
+    if (!fs.existsSync(absFile)) return null;
+    const content = fs.readFileSync(absFile, "utf-8");
 
-  const named = symbols.filter((s) => s.name === symbolName);
-  if (named.length === 0) return null;
-  // Prefer a top-level declaration (no container) over a member.
-  named.sort(
-    (a, b) =>
-      (a.containerName ? 1 : 0) - (b.containerName ? 1 : 0) || a.line - b.line,
-  );
-  const sym = named[0];
-  const pos = { line: sym.line, character: sym.character ?? 0 };
+    const parsed = backend.parse(content, absFile);
+    const matches = parsed.symbols.filter((s) => s.name === symbolName);
+    if (matches.length === 0) return null;
+    // Prefer top-level declarations over class members.
+    matches.sort(
+      (a, b) =>
+        (a.parentQualifiedName ? 1 : 0) - (b.parentQualifiedName ? 1 : 0) ||
+        a.startLine - b.startLine,
+    );
+    const sym = matches[0];
 
-  // Resolve the canonical definition (follows imports/re-exports); fall back to
-  // the document-symbol's own span when the server returns nothing.
-  const defs = await lspDefinition(absFile, pos, root);
-  const location =
-    defs && defs.length > 0
-      ? { filePath: defs[0].filePath, line: defs[0].line }
-      : { filePath: absFile, line: sym.line };
+    const signature =
+      sym.signature && sym.signature !== sym.name
+        ? sym.signature
+        : (declarationSignature(content, sym.startLine, language) ?? sym.name);
 
-  const hover = await lspHover(absFile, pos, root);
+    const kind = mapSymbolKind(sym.kind);
+    const related: RelatedSymbol[] = parsed.relations
+      .filter((r) => r.fromQualifiedName === sym.qualifiedName)
+      .map((r) => ({ name: r.toName, relationship: r.kind }));
+    if (kind === "function") {
+      related.push(...relatedTypesFromSignature(signature));
+    }
 
-  return {
-    name: sym.name,
-    kind: mapSymbolKind(sym.kind),
-    signature: hover?.type || sym.name,
-    documentation: hover?.documentation ?? "",
-    location,
-    related: [],
-  };
+    return {
+      name: sym.name,
+      kind,
+      signature,
+      documentation: sym.doc ?? leadingCommentBlock(content, sym.startLine),
+      location: { filePath: absFile, line: sym.startLine },
+      related: deduplicateRelated(related),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -837,17 +1013,47 @@ function symbolContextFromIndex(
         // returns null → the caller's scan produces the correct fresh answer.
         if (fresh.state === "stale") stalePath = file.path;
       } else {
+        const absPath = path.join(root, file.path);
+        // Stored signatures are backend-dependent (the regex backend records
+        // parameter names without their types). The file is verified fresh, so
+        // the literal declaration text from source is authoritative; the index
+        // row is the fallback, the bare symbol name last.
+        let signature: string | null = null;
+        let documentation = sym.doc ?? "";
+        try {
+          const content = fs.readFileSync(absPath, "utf-8");
+          const language =
+            file.language ??
+            getLanguageFromExtension(path.extname(file.path).toLowerCase());
+          signature = declarationSignature(content, sym.startLine, language);
+          if (!documentation) {
+            documentation = leadingCommentBlock(content, sym.startLine);
+          }
+        } catch {
+          // Source unreadable — keep whatever the index had.
+        }
+        signature =
+          signature ??
+          (sym.signature && sym.signature !== sym.name
+            ? sym.signature
+            : null) ??
+          sym.name;
+
+        const kind = mapSymbolKind(sym.kind);
         const related = relatedFromEdges(cm, sym);
+        if (kind === "function") {
+          related.push(...relatedTypesFromSignature(signature));
+        }
         result = {
           name: sym.name,
-          kind: mapSymbolKind(sym.kind),
-          signature: sym.signature ?? sym.name,
-          documentation: sym.doc ?? "",
+          kind,
+          signature,
+          documentation,
           location: {
-            filePath: path.join(root, file.path),
+            filePath: absPath,
             line: sym.startLine,
           },
-          related,
+          related: deduplicateRelated(related),
         };
       }
     } finally {
@@ -880,7 +1086,6 @@ function relatedFromEdges(cm: CodeMap, sym: SymbolRecord): RelatedSymbol[] {
 // ============================================================================
 
 export {
-  getCachedParseResult,
   collectSourceFiles,
   findSymbolInParseResult,
   extractTypeName,

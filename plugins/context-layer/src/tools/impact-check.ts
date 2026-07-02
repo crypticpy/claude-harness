@@ -8,12 +8,11 @@
 import * as fs from "fs";
 import * as path from "path";
 import { glob } from "glob";
-import { LSPResult } from "../lsp";
 import {
   getGlobalCache,
   generateSymbolSearchCacheKey,
   computeFileHash,
-} from "../lsp/cache";
+} from "./result-cache";
 import { parseFile } from "../indexer/parser";
 import type { ImportInfo, ParseResult } from "../indexer/types";
 import {
@@ -22,12 +21,6 @@ import {
   openCodeMap,
 } from "../indexer/code-map-service";
 import { projectIdFor } from "../storage/code-map";
-import {
-  lspEnabled,
-  lspDocumentSymbols,
-  lspReferences,
-  lspDiagnostics,
-} from "../lsp/lsp-service";
 
 // ============================================================================
 // Types
@@ -37,6 +30,19 @@ export interface ImpactCheckInput {
   filePath: string; // File being modified
   symbolName?: string; // Specific symbol (optional)
   projectPath: string; // Project root
+}
+
+/** Standard tool result envelope (success flag + optional data/error). */
+export interface ToolResult<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  metadata?: {
+    cached?: boolean;
+    duration?: number;
+    usedFallback?: boolean;
+    filesSearched?: number;
+  };
 }
 
 export interface Dependent {
@@ -60,18 +66,19 @@ export interface ImpactResult {
   dependents: Dependent[];
   riskLevel: "low" | "medium" | "high" | "critical";
   suggestions: string[];
-  /** Current LSP diagnostics for the target file (only set on the LSP path). */
+  /** Kept for output-shape compat; always [] (the LSP tier that filled it is gone). */
   diagnostics?: Array<{ line: number; severity?: number; message: string }>;
   /**
-   * Which tier produced this result and whether to trust it as exhaustive.
-   * `strategy`: "lsp" = real reference sites from the language server; "index" /
-   * "scan" = the code-map import graph (via the DB or a live file scan).
-   * `complete` is true only for the LSP tier — the import-graph tiers find files
-   * that IMPORT the target but miss usages that don't re-import it (same-file,
-   * dynamic, or via re-export), so treat their dependent list as import-level.
+   * Which tier produced this result. `strategy`: "index" = the code-map import
+   * graph (SQLite DB); "scan" = a live file scan. `complete` is ALWAYS false —
+   * import-level analysis finds files that IMPORT the target but cannot prove
+   * symbol-level completeness (same-file, dynamic, or re-export usages are
+   * missed). For an exhaustive symbol-level answer, use the built-in LSP tool
+   * (findReferences / incomingCalls) — a suggestion points there when a
+   * symbolName is given.
    */
   provenance: {
-    strategy: "lsp" | "index" | "scan";
+    strategy: "index" | "scan";
     complete: boolean;
   };
   metadata: {
@@ -119,7 +126,7 @@ const USAGE_RISK_WEIGHTS: Record<Dependent["usage"], number> = {
  */
 export async function checkImpact(
   input: ImpactCheckInput,
-): Promise<LSPResult<ImpactResult>> {
+): Promise<ToolResult<ImpactResult>> {
   const startTime = Date.now();
   const cache = getGlobalCache();
 
@@ -136,13 +143,13 @@ export async function checkImpact(
   const normalizedFilePath = path.resolve(filePath);
   const normalizedProjectPath = path.resolve(projectPath);
 
-  // The file-level index path re-walks the code map on every call, so it is both
-  // fresh and cheap. Caching its result by the TARGET's hash would be unsound —
-  // who imports a file depends on OTHER files, so an unchanged target could
-  // return a stale importer list after an importer is added/removed. So the
-  // index path bypasses the hash cache entirely; only the symbol/LSP/regex tiers
-  // (whose result tracks the target's own content) use it.
-  const indexPathApplies = codeMapEnabled() && !symbolName;
+  // The index path re-walks the code map on every call, so it is both fresh and
+  // cheap. Caching its result by the TARGET's hash would be unsound — who
+  // imports a file depends on OTHER files, so an unchanged target could return
+  // a stale importer list after an importer is added/removed. So the index path
+  // bypasses the hash cache entirely; only the scan tier (when the code map is
+  // disabled/unavailable) uses it.
+  const indexPathApplies = codeMapEnabled();
 
   // Check cache
   const cacheKey = generateSymbolSearchCacheKey(
@@ -152,9 +159,10 @@ export async function checkImpact(
   );
 
   let fileHash: string;
+  let targetContent: string;
   try {
-    const content = fs.readFileSync(normalizedFilePath, "utf-8");
-    fileHash = computeFileHash(content);
+    targetContent = fs.readFileSync(normalizedFilePath, "utf-8");
+    fileHash = computeFileHash(targetContent);
 
     const cached = indexPathApplies
       ? null
@@ -176,41 +184,24 @@ export async function checkImpact(
   }
 
   try {
-    // LSP tier (symbol-level): real reference sites + current diagnostics, which
-    // the import-graph scan can't resolve. Falls through on any miss (no server,
-    // symbol not found).
-    if (symbolName && lspEnabled()) {
-      const viaLsp = await impactFromLsp(
+    // Index-first: code-map import edges capture which files import the target.
+    // Symbol-level narrows those importers to the ones that actually bind/use
+    // the symbol. Falls through to the scan on any miss (db unavailable, target
+    // unindexed).
+    if (indexPathApplies) {
+      const indexed = await impactFromIndex(
         normalizedProjectPath,
         normalizedFilePath,
         symbolName,
         startTime,
       );
-      if (viaLsp) {
-        cache.set(cacheKey, viaLsp, fileHash, normalizedFilePath);
-        return {
-          success: true,
-          data: viaLsp,
-          metadata: {
-            cached: false,
-            duration: viaLsp.metadata.duration,
-            filesSearched: viaLsp.metadata.filesSearched,
-            usedFallback: false,
-          },
-        };
-      }
-    }
-
-    // Index-first (file-level only): code-map import edges fully capture which
-    // files import the target. Symbol-level falls through to the scan below —
-    // call/reference sites need the Tree-sitter/LSP tiers (Phase 3b).
-    if (indexPathApplies) {
-      const indexed = impactFromIndex(
-        normalizedProjectPath,
-        normalizedFilePath,
-        startTime,
-      );
       if (indexed) {
+        appendLspConfirmSuggestion(
+          indexed,
+          symbolName,
+          targetContent,
+          normalizedFilePath,
+        );
         // No cache.set: the index path is freshness-sensitive (see indexPathApplies)
         // and bypasses the hash cache on both read and write.
         return {
@@ -260,6 +251,7 @@ export async function checkImpact(
       dependents,
       riskLevel,
       suggestions,
+      diagnostics: [],
       provenance: { strategy: "scan", complete: false },
       metadata: {
         totalFiles: projectFiles.length,
@@ -268,11 +260,17 @@ export async function checkImpact(
         cached: false,
       },
     };
+    appendLspConfirmSuggestion(
+      result,
+      symbolName,
+      targetContent,
+      normalizedFilePath,
+    );
 
     // Cache the result — but never under an index-path key. When indexPathApplies
-    // we reach the regex fallback only because impactFromIndex returned null
-    // (unparseable/unindexed target); caching that file-level result by the
-    // target's own hash is the unsound, never-read entry the cache.get bypass is
+    // we reach the scan fallback only because impactFromIndex returned null
+    // (unparseable/unindexed target); caching that scan result by the target's
+    // own hash is the unsound, never-read entry the cache.get bypass is
     // designed to avoid. Skipping the write keeps get/set symmetric.
     if (!indexPathApplies) {
       cache.set(cacheKey, result, fileHash, normalizedFilePath);
@@ -887,93 +885,63 @@ function generateSuggestions(
 }
 
 // ============================================================================
-// Index-backed impact (file-level)
+// Index-backed impact
 // ============================================================================
 
 /**
- * Answer a file-level impact check from code-map import edges. Returns null on
- * any miss (file not indexed, db unavailable, file outside project) so the
- * caller falls back to the scan. Bootstraps a full index on first use.
+ * When a symbol is named, point at the built-in LSP tool for the exhaustive
+ * symbol-level answer this import-graph analysis cannot give. Appended to the
+ * result's suggestions on BOTH tiers, anchored at the symbol's declaration.
  */
-/**
- * Symbol-level impact via LSP: locate the symbol in its file, ask the language
- * server for every reference site, and attach the file's current diagnostics.
- * Returns null on any miss (server unavailable, symbol absent) so the caller
- * falls back to the import-graph scan.
- */
-async function impactFromLsp(
-  projectRootAbs: string,
+function appendLspConfirmSuggestion(
+  result: ImpactResult,
+  symbolName: string | undefined,
+  targetContent: string,
   targetFileAbs: string,
-  symbolName: string,
-  startTime: number,
-): Promise<ImpactResult | null> {
-  const symbols = await lspDocumentSymbols(targetFileAbs, projectRootAbs);
-  if (!symbols) return null;
-  const named = symbols.filter((s) => s.name === symbolName);
-  if (named.length === 0) return null;
-  // Prefer a top-level declaration (no container) over a member.
-  named.sort(
-    (a, b) =>
-      (a.containerName ? 1 : 0) - (b.containerName ? 1 : 0) || a.line - b.line,
+): void {
+  if (!symbolName) return;
+  const line = declarationLine(targetContent, targetFileAbs, symbolName);
+  const at = line ? `${targetFileAbs}:${line}` : targetFileAbs;
+  result.suggestions.push(
+    `Confirm symbol-level impact with the built-in LSP tool ` +
+      `(findReferences / incomingCalls) at ${at}`,
   );
-  const sym = named[0];
-
-  const refs = await lspReferences(
-    targetFileAbs,
-    { line: sym.line, character: sym.character ?? 0 },
-    projectRootAbs,
-    false,
-  );
-  if (!refs) return null;
-
-  // Drop the declaration site itself; every other reference is a dependent.
-  // LSP references don't carry a syntactic role, so label them "unknown".
-  const dependents: Dependent[] = refs
-    .filter(
-      (r) =>
-        !(path.resolve(r.filePath) === targetFileAbs && r.line === sym.line),
-    )
-    .map((r) => ({
-      filePath: path.resolve(r.filePath),
-      line: r.line,
-      usage: "unknown" as const,
-      symbolUsed: symbolName,
-      context: r.context || `references ${symbolName}`,
-    }));
-
-  const diags = await lspDiagnostics(targetFileAbs, projectRootAbs);
-  const fileSet = new Set(dependents.map((d) => d.filePath));
-  const riskLevel = calculateRiskLevel(dependents);
-  const suggestions = generateSuggestions(dependents, symbolName, riskLevel);
-
-  return {
-    symbol: symbolName,
-    filePath: targetFileAbs,
-    dependents,
-    riskLevel,
-    suggestions,
-    diagnostics: diags
-      ? diags.map((d) => ({
-          line: d.range.start.line + 1,
-          severity: d.severity,
-          message: d.message,
-        }))
-      : undefined,
-    provenance: { strategy: "lsp", complete: true },
-    metadata: {
-      totalFiles: fileSet.size,
-      filesSearched: fileSet.size,
-      duration: Date.now() - startTime,
-      cached: false,
-    },
-  };
 }
 
-function impactFromIndex(
+/** Declaration line of a symbol in the target file, or null when not found. */
+function declarationLine(
+  content: string,
+  filePathAbs: string,
+  symbolName: string,
+): number | null {
+  try {
+    const parsed = parseFile(content, filePathAbs);
+    const hit =
+      parsed.functions.find((f) => f.name === symbolName) ??
+      parsed.classes.find((c) => c.name === symbolName) ??
+      parsed.types.find((t) => t.name === symbolName) ??
+      parsed.exports.find((e) => e.name === symbolName);
+    return hit ? hit.line : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Answer an impact check from code-map import edges. File-level: every file
+ * with an `imports` edge onto the target is a dependent. Symbol-level: the
+ * import graph narrows the candidate set to the target's importers, which are
+ * then parsed for bindings/usages of the named symbol (import lines, call
+ * sites, extends/implements, namespace access). Returns null on any miss
+ * (file not indexed, db unavailable, file outside project) so the caller
+ * falls back to the scan. Bootstraps a full index on first use.
+ */
+async function impactFromIndex(
   projectRootAbs: string,
   targetFileAbs: string,
+  symbolName: string | undefined,
   startTime: number,
-): ImpactResult | null {
+): Promise<ImpactResult | null> {
   try {
     const relPath = path
       .relative(projectRootAbs, targetFileAbs)
@@ -1000,31 +968,56 @@ function impactFromIndex(
       const pathById = new Map(
         cm.listFiles(projectId).map((f) => [f.id, f.path] as const),
       );
-      const dependents: Dependent[] = [];
-      for (const edge of cm.edgesTargetingFile(projectId, targetFile.id)) {
-        if (edge.kind !== "imports" || !edge.sourceFileId) continue;
-        const src = pathById.get(edge.sourceFileId);
-        if (!src) continue;
-        dependents.push({
-          filePath: path.join(projectRootAbs, src),
-          line: edge.line ?? 0,
-          usage: "import",
-          context: `imports ${relPath}`,
-        });
+      let dependents: Dependent[] = [];
+      let filesSearched = pathById.size;
+      if (symbolName) {
+        // Symbol-level: importer files from the graph, then a parse of just
+        // those files for import bindings + call/extends/namespace usages.
+        const importerAbs: string[] = [];
+        for (const edge of cm.edgesTargetingFile(projectId, targetFile.id)) {
+          if (edge.kind !== "imports" || !edge.sourceFileId) continue;
+          const src = pathById.get(edge.sourceFileId);
+          if (!src) continue;
+          importerAbs.push(path.join(projectRootAbs, src));
+        }
+        const importMaps = await buildImportMaps(
+          Array.from(new Set(importerAbs)),
+          projectRootAbs,
+        );
+        dependents = await findSymbolDependents(
+          targetFileAbs,
+          symbolName,
+          importMaps,
+          projectRootAbs,
+        );
+        filesSearched = importMaps.length;
+      } else {
+        for (const edge of cm.edgesTargetingFile(projectId, targetFile.id)) {
+          if (edge.kind !== "imports" || !edge.sourceFileId) continue;
+          const src = pathById.get(edge.sourceFileId);
+          if (!src) continue;
+          dependents.push({
+            filePath: path.join(projectRootAbs, src),
+            line: edge.line ?? 0,
+            usage: "import",
+            context: `imports ${relPath}`,
+          });
+        }
       }
 
       const riskLevel = calculateRiskLevel(dependents);
-      const suggestions = generateSuggestions(dependents, undefined, riskLevel);
+      const suggestions = generateSuggestions(dependents, symbolName, riskLevel);
       return {
-        symbol: path.basename(targetFileAbs),
+        symbol: symbolName || path.basename(targetFileAbs),
         filePath: targetFileAbs,
         dependents,
         riskLevel,
         suggestions,
+        diagnostics: [],
         provenance: { strategy: "index", complete: false },
         metadata: {
           totalFiles: pathById.size,
-          filesSearched: pathById.size,
+          filesSearched,
           duration: Date.now() - startTime,
           cached: false,
         },

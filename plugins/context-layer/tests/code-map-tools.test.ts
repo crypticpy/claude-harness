@@ -13,7 +13,7 @@ import { refreshIndex } from "../src/tools/refresh-index";
 import { indexStatusTool } from "../src/tools/index-status";
 import { openCodeMap } from "../src/indexer/code-map-service";
 import { projectIdFor } from "../src/storage/code-map";
-import { resetGlobalCache } from "../src/lsp/cache";
+import { resetGlobalCache } from "../src/tools/result-cache";
 
 let projectDir: string;
 let savedEnv: Record<string, string | undefined>;
@@ -145,6 +145,40 @@ describe("impact_check index-first (file level)", () => {
     const cm = openCodeMap(projectDir)!;
     expect(cm.getFile(projectIdFor(projectDir), "src/other.ts")).not.toBeNull();
     cm.close();
+  });
+
+  it("symbol-level: finds an importer that calls the symbol, via the index tier", async () => {
+    // Regression for the LSP-tier false negative: an empty answer used to be
+    // stamped {strategy:"lsp", complete:true} and consumers were reported as
+    // zero dependents. The index tier must find B (imports + calls A's export)
+    // and must NEVER claim completeness.
+    write("src/a.ts", `export function widgetize() { return 1; }\n`);
+    write(
+      "src/b.ts",
+      `import { widgetize } from './a';\nexport const v = widgetize();\n`,
+    );
+
+    const res = await checkImpact({
+      filePath: path.join(projectDir, "src/a.ts"),
+      symbolName: "widgetize",
+      projectPath: projectDir,
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.data!.provenance).toEqual({ strategy: "index", complete: false });
+    const deps = res.data!.dependents;
+    expect(deps.length).toBeGreaterThanOrEqual(1);
+    expect(deps.some((d) => d.filePath.endsWith("b.ts"))).toBe(true);
+    // Both the import binding and the call site are surfaced.
+    expect(deps.some((d) => d.usage === "import")).toBe(true);
+    expect(deps.some((d) => d.usage === "call")).toBe(true);
+    // A symbolName always carries the pointer to the exhaustive built-in tool,
+    // anchored at the declaration (src/a.ts line 1).
+    const confirm = res.data!.suggestions.find((s) =>
+      s.includes("findReferences"),
+    );
+    expect(confirm).toBeTruthy();
+    expect(confirm).toContain(`${path.join(projectDir, "src/a.ts")}:1`);
   });
 });
 

@@ -25,8 +25,7 @@ describe("readPuntaxConfig — defaults", () => {
     expect(cfg.eventLedger.enabled).toBe(true);
     expect(cfg.precompact.mode).toBe("deterministic");
     expect(cfg.codeMap.enabled).toBe(true);
-    expect(cfg.lsp.enabled).toBe(true);
-    expect(cfg.llmDistillation.enabled).toBe(false);
+    expect(cfg.llmDistillation.enabled).toBe(true);
   });
 
   it("does not mutate DEFAULT_PUNTAX", () => {
@@ -41,10 +40,10 @@ describe("readPuntaxConfig — defaults", () => {
   it("does not leak env-driven flags into DEFAULT_PUNTAX (subsystem not in config block)", () => {
     readPuntaxConfig(
       {},
-      { PUNTAX_LLM_DISTILLATION: "yes", PUNTAX_EVENT_LEDGER: "on" },
+      { PUNTAX_LLM_DISTILLATION: "off", PUNTAX_EVENT_LEDGER: "off" },
     );
     // The shared default must stay pristine for the next caller.
-    expect(DEFAULT_PUNTAX.llmDistillation.enabled).toBe(false);
+    expect(DEFAULT_PUNTAX.llmDistillation.enabled).toBe(true);
     expect(DEFAULT_PUNTAX.eventLedger.enabled).toBe(true);
   });
 });
@@ -76,30 +75,24 @@ describe("readPuntaxConfig — env overrides", () => {
         PUNTAX_CONTEXT_ROUTER: "false",
         PUNTAX_EVENT_LEDGER: "1",
         PUNTAX_CODE_MAP: "on",
-        PUNTAX_LSP: "true",
-        PUNTAX_LLM_DISTILLATION: "yes",
+        PUNTAX_LLM_DISTILLATION: "no",
       },
     );
     expect(cfg.contextRouter.enabled).toBe(false);
     expect(cfg.eventLedger.enabled).toBe(true);
     expect(cfg.codeMap.enabled).toBe(true);
-    expect(cfg.lsp.enabled).toBe(true);
-    expect(cfg.llmDistillation.enabled).toBe(true);
+    expect(cfg.llmDistillation.enabled).toBe(false);
   });
 
-  it("defaults PUNTAX_LSP to on; env and config block can disable it", () => {
-    expect(readPuntaxConfig({}, {}).lsp.enabled).toBe(true);
-    expect(readPuntaxConfig({}, { PUNTAX_LSP: "off" }).lsp.enabled).toBe(false);
-    expect(
-      readPuntaxConfig({ puntax: { lsp: { enabled: false } } }, {}).lsp.enabled,
-    ).toBe(false);
-    // Env override wins over config block.
-    expect(
-      readPuntaxConfig(
-        { puntax: { lsp: { enabled: false } } },
-        { PUNTAX_LSP: "yes" },
-      ).lsp.enabled,
-    ).toBe(true);
+  it("tolerates a legacy puntax.lsp block without erroring (ignore-and-drop)", () => {
+    // The in-house LSP tier was removed; old config.json files may still carry
+    // the block. Parsing must not throw and the rest of the config must load.
+    const cfg = readPuntaxConfig(
+      { puntax: { lsp: { enabled: true }, contextRouter: { budgets: { prompt: 77 } } } },
+      { PUNTAX_LSP: "false" },
+    );
+    expect(cfg.contextRouter.budgets.prompt).toBe(77);
+    expect(cfg.codeMap.enabled).toBe(true);
   });
 
   it("honors PUNTAX_PRECOMPACT_MODE only for valid values", () => {
@@ -183,20 +176,20 @@ describe("loadPuntaxConfig — disk loading", () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
-        puntax: { contextRouter: { budgets: { prompt: 42 } }, lsp: { enabled: true } },
+        puntax: { contextRouter: { budgets: { prompt: 42 } } },
       }),
     );
     // First load populates the raw-file cache.
     const a = loadPuntaxConfig({ explicitPath: file, env: {} });
     expect(a.contextRouter.budgets.prompt).toBe(42);
-    expect(a.lsp.enabled).toBe(true);
+    expect(a.codeMap.enabled).toBe(true);
     // Same file (cache hit — prompt still 42) but a live env override must win.
     const b = loadPuntaxConfig({
       explicitPath: file,
-      env: { PUNTAX_LSP: "false" },
+      env: { PUNTAX_CODE_MAP: "false" },
     });
     expect(b.contextRouter.budgets.prompt).toBe(42);
-    expect(b.lsp.enabled).toBe(false);
+    expect(b.codeMap.enabled).toBe(false);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -225,6 +218,8 @@ describe("loadPuntaxConfig — disk loading", () => {
 });
 
 describe("cross-runtime parity (.ts vs .mjs)", () => {
+  // Both runtimes dropped the `lsp` block when the in-house LSP tier was
+  // removed, so the tables must be identical again — no key-stripping.
   it("default tables match", () => {
     expect(DEFAULT_PUNTAX_MJS).toEqual(DEFAULT_PUNTAX);
   });

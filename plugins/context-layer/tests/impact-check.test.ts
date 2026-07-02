@@ -12,9 +12,8 @@ let prevCodeMap: string | undefined;
 
 beforeEach(() => {
   projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "impact-mjs-"));
-  // Force the grep/import-map fallback: disable the code-map index, and pass no
-  // symbolName so the LSP tier is skipped too. This exercises findProjectFiles +
-  // buildImportMaps directly.
+  // Force the grep/import-map fallback by disabling the code-map index. This
+  // exercises findProjectFiles + buildImportMaps directly.
   prevCodeMap = process.env.PUNTAX_CODE_MAP;
   process.env.PUNTAX_CODE_MAP = "false";
 });

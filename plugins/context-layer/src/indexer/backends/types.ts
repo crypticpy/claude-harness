@@ -6,15 +6,15 @@
  * cross-file edges in a post-pass. Backends are pure per-file and stateless.
  *
  * Tiers (high -> low), per docs/06:
- *   lsp        LSP-derived, high confidence
+ *   lsp        LSP-derived, high confidence (historical — see NB)
  *   extracted  Tree-sitter syntactic extraction
  *   inferred   regex / heuristic fallback
  *
- * NB: `lsp` is a QUERY-TIME tier (symbol_context / impact_check call a language
- * server on demand) — there is no LSP `IndexBackend`, because `parse()` is
- * synchronous and LSP is inherently async. The bulk indexer therefore runs only
- * two backends, in order: tree-sitter (`extracted`) then regex (`inferred`) as
- * the always-available fallback — see `defaultBackends()` in code-map-service.
+ * NB: the `lsp` Confidence value is historical — the in-house LSP tier was
+ * removed (the built-in Claude Code LSP tool supersedes it); the value stays in
+ * the enum so old code-map.db rows still parse. The bulk indexer runs only two
+ * backends, in order: tree-sitter (`extracted`) then regex (`inferred`) as the
+ * always-available fallback — see `defaultBackends()` in code-map-service.
  * Config `codeMap.backendOrder` is documentation only; nothing reads it for
  * selection (`pickBackend` honors the array order it is handed).
  */
@@ -72,7 +72,7 @@ export interface BackendParseResult {
 }
 
 export interface IndexBackend {
-  /** Stable identifier: 'regex' | 'tree-sitter' | 'lsp'. */
+  /** Stable identifier: 'regex' | 'tree-sitter'. */
   readonly name: string;
   /** Confidence tier this backend's symbols are tagged with. */
   readonly tier: Confidence;

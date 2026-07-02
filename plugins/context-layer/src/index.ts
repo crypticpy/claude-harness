@@ -11,24 +11,6 @@
 // Tool Exports
 // =============================================================================
 
-// Chunk Reference Tool
-export {
-  getChunkRef,
-  cacheChunk,
-  extractChunk,
-  extractAndCacheChunk,
-  getOrExtractChunk,
-  invalidateChunk,
-  listChunksForFile,
-  parseChunkId,
-  computeContentHash,
-  getSymbolLocations,
-  type ChunkRefInput,
-  type ChunkRefResult,
-  type CacheChunkInput,
-  type SymbolLocation as ChunkSymbolLocation,
-} from "./tools/chunk-ref";
-
 // Semantic Lookup Tool
 export {
   semanticLookup,
@@ -50,7 +32,6 @@ import { semanticLookupToolDefinition as _semanticLookupToolDefinition } from ".
 // Symbol Context Tool
 export {
   getSymbolContext,
-  getCachedParseResult,
   collectSourceFiles,
   findSymbolInParseResult,
   extractTypeName,
@@ -67,6 +48,7 @@ export {
   type ImpactCheckInput,
   type ImpactResult,
   type Dependent,
+  type ToolResult,
 } from "./tools/impact-check";
 
 // =============================================================================
@@ -135,30 +117,17 @@ export {
 } from "./indexer";
 
 // =============================================================================
-// LSP Exports
+// Result Cache Exports
 // =============================================================================
 
 export {
-  Reference,
-  CallInfo,
-  HoverInfo,
-  SymbolLocation,
-  SymbolInfo,
-  SymbolKind,
-  LSPResult,
-  LSPConfig,
-  DEFAULT_LSP_CONFIG,
-  LanguageId,
-  EXTENSION_TO_LANGUAGE,
-  getLanguageFromPath,
   CacheEntry,
-  LSPCache,
-  generateCacheKey,
+  ResultCache,
   generateSymbolSearchCacheKey,
   computeFileHash,
   getGlobalCache,
   resetGlobalCache,
-} from "./lsp";
+} from "./tools/result-cache";
 
 // =============================================================================
 // Hooks Exports
@@ -194,7 +163,7 @@ export const PLUGIN_DESCRIPTION =
 // =============================================================================
 
 import { createStorage } from "./storage";
-import { resetGlobalCache as _resetGlobalCache } from "./lsp";
+import { resetGlobalCache as _resetGlobalCache } from "./tools/result-cache";
 import type { ContextStorage } from "./storage/interface";
 
 /** Global storage instance for plugin lifecycle */
@@ -283,7 +252,7 @@ export async function shutdownPlugin(): Promise<void> {
     globalStorage = null;
   }
 
-  // Reset LSP cache
+  // Reset the tool result cache
   _resetGlobalCache();
 }
 

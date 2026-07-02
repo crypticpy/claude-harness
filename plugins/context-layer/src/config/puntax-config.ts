@@ -50,9 +50,6 @@ export interface PuntaxConfig {
     dbPath: string;
     backendOrder: string[];
   };
-  lsp: {
-    enabled: boolean;
-  };
 }
 
 export type RouterMode = keyof PuntaxConfig["contextRouter"]["budgets"];
@@ -85,20 +82,17 @@ export const DEFAULT_PUNTAX: PuntaxConfig = {
     },
   },
   llmDistillation: {
-    enabled: false,
-    model: "gpt-5-mini",
+    enabled: true,
+    model: "haiku",
     maxTokens: 4000,
   },
   codeMap: {
     enabled: true,
     dbPath: ".claude/context-layer/code-map.db",
     // Documentation only — nothing reads this for backend selection. The bulk
-    // indexer runs tree-sitter then regex (defaultBackends); `lsp` is a
-    // query-time tier (symbol_context / impact_check), not an IndexBackend.
-    backendOrder: ["lsp", "tree-sitter", "regex"],
-  },
-  lsp: {
-    enabled: true,
+    // indexer runs tree-sitter then regex (defaultBackends). Kept for
+    // value-parity with the hook runtime's puntax-config.mjs.
+    backendOrder: ["tree-sitter", "regex"],
   },
 };
 
@@ -173,7 +167,9 @@ export function readPuntaxConfig(
     "PUNTAX_CODE_MAP",
     merged.codeMap.enabled,
   );
-  merged.lsp.enabled = envFlag(env, "PUNTAX_LSP", merged.lsp.enabled);
+  // NB: a `puntax.lsp` block in config.json (and PUNTAX_LSP in the env) is
+  // tolerated but ignored — the in-house LSP tier was removed. deepMerge lets
+  // the unknown key ride along untyped rather than erroring on old configs.
   merged.llmDistillation.enabled = envFlag(
     env,
     "PUNTAX_LLM_DISTILLATION",
@@ -206,8 +202,8 @@ export function configCandidatePaths(
 }
 
 // Cache the raw parsed config file keyed by (path, mtimeMs, size). The MCP
-// server calls loadPuntaxConfig on every gate check (lspEnabled / codeMapEnabled
-// — 4+ per symbol_context), so re-reading + re-parsing an unchanged config.json
+// server calls loadPuntaxConfig on every gate check (codeMapEnabled — several
+// per symbol_context), so re-reading + re-parsing an unchanged config.json
 // each time is pure waste. Env overrides are re-applied via readPuntaxConfig on
 // EVERY call, so a live PUNTAX_* change (and tests that mutate process.env) take
 // effect immediately — only the disk read + JSON.parse is memoized.

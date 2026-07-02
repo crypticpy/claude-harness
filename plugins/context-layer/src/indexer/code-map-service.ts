@@ -28,8 +28,8 @@ import { readyTreeSitterBackend } from "./backends/tree-sitter";
 /**
  * Backends in tier order: the warmed tree-sitter backend (if grammars loaded)
  * ahead of regex, which is the always-available fallback. This is what makes
- * config `backendOrder: ["lsp","tree-sitter","regex"]` resolve a real
- * tree-sitter tier instead of silently falling through to regex.
+ * config `backendOrder: ["tree-sitter","regex"]` resolve a real tree-sitter
+ * tier instead of silently falling through to regex.
  */
 export function defaultBackends(): IndexBackend[] {
   const ts = readyTreeSitterBackend();

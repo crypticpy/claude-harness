@@ -15,7 +15,6 @@
     "claude-code",
     "plugin",
     "context",
-    "lsp",
     "code-intelligence"
   ],
   "author": "Auto-Claude",
@@ -55,10 +54,6 @@
       {
         "name": "symbol_context",
         "description": "Get type info and documentation for any symbol"
-      },
-      {
-        "name": "chunk_ref",
-        "description": "Reference already-read code without re-reading"
       }
     ],
     "hooks": [

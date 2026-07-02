@@ -64,22 +64,17 @@ describe("extractTypeName — unwraps builtin container generics", () => {
 
 describe("getSymbolContext — related symbols from generic return types", () => {
   let dir: string;
-  let prevLsp: string | undefined;
   let prevCodeMap: string | undefined;
 
   beforeEach(() => {
-    // Force the AST tier so the pure type-relationship logic is exercised
-    // deterministically (no language server, no code-map index).
-    prevLsp = process.env.PUNTAX_LSP;
+    // Force the parse tier so the pure type-relationship logic is exercised
+    // deterministically (no code-map index).
     prevCodeMap = process.env.PUNTAX_CODE_MAP;
-    process.env.PUNTAX_LSP = "false";
     process.env.PUNTAX_CODE_MAP = "false";
     dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "symctx-")));
   });
 
   afterEach(() => {
-    if (prevLsp === undefined) delete process.env.PUNTAX_LSP;
-    else process.env.PUNTAX_LSP = prevLsp;
     if (prevCodeMap === undefined) delete process.env.PUNTAX_CODE_MAP;
     else process.env.PUNTAX_CODE_MAP = prevCodeMap;
     fs.rmSync(dir, { recursive: true, force: true });
@@ -102,7 +97,39 @@ describe("getSymbolContext — related symbols from generic return types", () =>
     });
     expect(res).not.toBeNull();
     expect(res!.related.some((r) => r.name === "Widget")).toBe(true);
-    // AST tier (no LSP, no index): structural signature, not type-resolved.
+    // Parse tier (no index): structural signature, not type-resolved.
+    expect(res!.provenance).toEqual({ strategy: "parse", complete: false });
+  });
+
+  it("signatureOnly keeps the parameter list in the signature (bug-3 regression)", async () => {
+    // The LSP tier used to return signature = the bare symbol name whenever
+    // hover missed. The parse tiers must return the literal declaration —
+    // parameters included — never just the name.
+    const file = path.join(dir, "maker.ts");
+    fs.writeFileSync(
+      file,
+      [
+        "export interface Widget { id: number; }",
+        "/** Builds a widget from its input. */",
+        "export function makeWidget(input: Widget, count: number): Widget {",
+        "  return input;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const res = await getSymbolContext({
+      symbolName: "makeWidget",
+      filePath: file,
+      projectPath: dir,
+      signatureOnly: true,
+    });
+    expect(res).not.toBeNull();
+    expect(res!.signature).not.toBe("makeWidget");
+    expect(res!.signature).toContain("input: Widget");
+    expect(res!.signature).toContain("count: number");
+    // signatureOnly still trims the token-heavy fields.
+    expect(res!.related).toEqual([]);
+    expect(res!.documentation).toBe("");
     expect(res!.provenance).toEqual({ strategy: "parse", complete: false });
   });
 });

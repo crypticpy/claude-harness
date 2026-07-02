@@ -1,5 +1,9 @@
 /**
- * LSP Cache Module
+ * In-memory result cache for the context-layer tools.
+ *
+ * TTL + file-hash validated cache shared by impact_check and symbol_context.
+ * (Formerly src/lsp/cache.ts; the cache never depended on a language server —
+ * it survived the LSP tier's removal because the deterministic tiers use it.)
  */
 
 import * as crypto from 'crypto';
@@ -11,7 +15,7 @@ export interface CacheEntry<T> {
   filePath?: string;
 }
 
-export class LSPCache {
+export class ResultCache {
   private cache: Map<string, CacheEntry<unknown>> = new Map();
   private defaultTimeout: number;
   private maxEntries: number;
@@ -92,15 +96,6 @@ export class LSPCache {
   }
 }
 
-export function generateCacheKey(
-  operation: string,
-  filePath: string,
-  line: number,
-  character: number
-): string {
-  return `${operation}:${filePath}:${line}:${character}`;
-}
-
 export function generateSymbolSearchCacheKey(
   operation: string,
   query: string,
@@ -113,11 +108,11 @@ export function computeFileHash(content: string): string {
   return crypto.createHash('md5').update(content).digest('hex');
 }
 
-let globalCache: LSPCache | null = null;
+let globalCache: ResultCache | null = null;
 
-export function getGlobalCache(timeoutMs?: number, maxEntries?: number): LSPCache {
+export function getGlobalCache(timeoutMs?: number, maxEntries?: number): ResultCache {
   if (!globalCache) {
-    globalCache = new LSPCache(timeoutMs, maxEntries);
+    globalCache = new ResultCache(timeoutMs, maxEntries);
   }
   return globalCache;
 }
