@@ -53,10 +53,14 @@ export function normalizeCommand(cmd) {
   // and is recognized as setup, not a banner — `<`/`>` are excluded from the
   // unquoted banner-content class. Only LEADING segments joined by `&&`/`;`
   // are dropped — an interior/trailing echo may be control flow
-  // (`make test || echo fail`).
+  // (`make test || echo fail`). Quote chars are ALSO excluded from the
+  // unquoted class: a `"` matchable by both alternatives makes the regex
+  // backtrack exponentially on unterminated input like `echo "a"…"a"X`
+  // (CodeRabbit, PR #2). Every char now matches exactly one alternative →
+  // linear time; an unpaired quote simply means no strip (conservative).
   for (let prev = null; prev !== s; ) {
     prev = s;
-    s = s.replace(/^echo(?:\s+(?:"[^"]*"|'[^']*'|[^&;|<>])*)?(?:&&|;)\s*/, '');
+    s = s.replace(/^echo(?:\s+(?:"[^"]*"|'[^']*'|[^&;|<>"'])*)?(?:&&|;)\s*/, '');
   }
   s = s
     .replace(/\s*\d*>&\d*/g, ' ')        // 2>&1, >&2

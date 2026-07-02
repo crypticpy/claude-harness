@@ -153,6 +153,20 @@ describe("normalizeCommand — output-plumbing canonicalization", () => {
     // A QUOTED angle bracket is content, not a redirect — still a banner.
     expect(normalizeCommand('echo "a > b" && pytest -q')).toBe("pytest -q");
   });
+
+  it("is linear-time on adversarial quote-heavy input (no ReDoS)", () => {
+    // A `"` matchable by both the quoted alternative and the catch-all class
+    // made the banner regex backtrack exponentially on unterminated input —
+    // ~15s at 20 repeats, effectively a hook hang at 30+. With quotes excluded
+    // from the catch-all, this completes instantly (the test timeout is the
+    // regression tripwire) and the unstrippable input passes through intact.
+    const adversarial = "echo " + '"a"'.repeat(100) + "X";
+    expect(normalizeCommand(adversarial)).toBe(adversarial);
+    // An unpaired quote means no strip — conservative, never wrong.
+    expect(normalizeCommand('echo "oops unterminated && npm test')).toBe(
+      'echo "oops unterminated && npm test',
+    );
+  });
 });
 
 describe("runAutoDistill — writes typed memory, dedups, fail-open", () => {
