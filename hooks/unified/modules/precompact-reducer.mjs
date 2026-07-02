@@ -221,7 +221,9 @@ export async function runReducer(event, config) {
       pruneEvents(projectDir, retentionDays);
       pruneCheckpoints(projectDir, retentionDays);
       // Quality filter, two composed predicates (memory-store stays agnostic):
-      //  1. Junk test_command rows, two flavors:
+      //  1. Junk test_command rows — auto-distilled rows ONLY (provenance
+      //     source 'event'); user-written rows via memory_write are never
+      //     dropped here, matching predicate 2's philosophy. Two flavors:
       //     (a) mis-tagged: an older event classifier tagged compound shell
       //         lines (e.g. `cd x && git status`) as test_command. The current
       //         classifier re-checks each row's text; anything that no longer
@@ -240,6 +242,7 @@ export async function runReducer(event, config) {
       const pruned = pruneMemories(projectDir, {
         dropJunk: (m) =>
           (m.kind === 'test_command' &&
+            m.provenance?.source === 'event' &&
             (classifyBashCommand(m.text || '') !== 'test' ||
               normalizeCommand(m.text || '') !== (m.text || ''))) ||
           isNeverRecalledJunk(m, recallCounts),

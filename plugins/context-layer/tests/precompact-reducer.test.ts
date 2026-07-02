@@ -259,13 +259,18 @@ describe("never-recalled memory prune (composed dropJunk)", () => {
   });
 
   it("drops junk test_command rows: mis-tagged and legacy un-normalized", async () => {
-    const tc = (text: string) =>
-      seed(text, { kind: "test_command", createdAt: new Date().toISOString() });
+    const tc = (text: string, over: Record<string, unknown> = {}) =>
+      seed(text, { kind: "test_command", createdAt: new Date().toISOString(), ...over });
     tc("npx vitest run"); // canonical → kept
     tc("cd pkg && npm test"); // compound but canonical + still a test → kept
     tc("cd x && git status"); // mis-tagged, never a test → dropped
     tc("npx vitest run 2>&1 | tail -30"); // legacy un-normalized → dropped
     tc('echo "=== suite ===" && npx vitest run'); // legacy banner prefix → dropped
+    // USER-written rows are exempt from the junk check entirely — even when
+    // un-normalized or unrecognized as a test (`make check` isn't a known
+    // runner). memory_write content is the user's call, not auto-distill's.
+    tc("make check", { provenance: { source: "user" } }); // kept
+    tc("npx vitest run 2>&1 | head -5", { provenance: { source: "manual" } }); // kept
 
     await runReducer(
       { session_id: "TC1", transcript_path: transcriptPath },
@@ -275,7 +280,12 @@ describe("never-recalled memory prune (composed dropJunk)", () => {
     const texts = readMemories(projectDir)
       .map((m) => m.text)
       .sort();
-    expect(texts).toEqual(["cd pkg && npm test", "npx vitest run"]);
+    expect(texts).toEqual([
+      "cd pkg && npm test",
+      "make check",
+      "npx vitest run",
+      "npx vitest run 2>&1 | head -5",
+    ]);
   });
 
   it("isNeverRecalledJunk is conservative on odd rows", () => {

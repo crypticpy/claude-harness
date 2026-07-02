@@ -140,6 +140,19 @@ describe("normalizeCommand — output-plumbing canonicalization", () => {
     // `echo`-prefixed executables are not banners.
     expect(normalizeCommand("echo-server && npm test")).toBe("echo-server && npm test");
   });
+
+  it("keeps setup echoes — an unquoted redirect means the echo does work", () => {
+    // Writing a file is setup, not a banner; the echo segment survives (its
+    // redirect target is still stripped by the pre-existing redirect pass).
+    expect(normalizeCommand("echo FOO=bar > .env && npm test")).toBe(
+      "echo FOO=bar && npm test",
+    );
+    expect(normalizeCommand("echo data >> fixtures.txt && pytest -q")).toBe(
+      "echo data && pytest -q",
+    );
+    // A QUOTED angle bracket is content, not a redirect — still a banner.
+    expect(normalizeCommand('echo "a > b" && pytest -q')).toBe("pytest -q");
+  });
 });
 
 describe("runAutoDistill — writes typed memory, dedups, fail-open", () => {
