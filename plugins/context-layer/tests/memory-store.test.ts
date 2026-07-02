@@ -439,3 +439,72 @@ describe("memoryWrite tool — derives projectId + defaults", () => {
     expect(all[0].projectId).toMatch(/^prj_/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cross-process locking: both runtimes must contend on the same
+// `<contextLayerDir>.lock` path (proper-lockfile on the TS side, mkdir mutex
+// on the .mjs side) so the read→dedup→append window is atomic across them.
+// ---------------------------------------------------------------------------
+describe("append locking — cross-runtime mutex", () => {
+  const lockPathFor = (projectDir: string) =>
+    path.dirname(memoriesPath(projectDir)) + ".lock";
+
+  it("acquires and releases without a lock warning on the uncontended path", () => {
+    const warnings: string[] = [];
+    const orig = console.error;
+    console.error = (msg?: unknown) => {
+      warnings.push(String(msg));
+    };
+    try {
+      const res = appendMemory(dir, baseInput());
+      expect(res.written).toBe(true);
+    } finally {
+      console.error = orig;
+    }
+    // The old sync path ALWAYS warned "Cannot use retries with the sync api"
+    // and proceeded unlocked — regression guard for that.
+    expect(warnings.filter((w) => w.includes("Failed to acquire lock"))).toEqual([]);
+    expect(fs.existsSync(lockPathFor(dir))).toBe(false); // released
+  });
+
+  it("steals a stale lock (crashed holder) and still writes", () => {
+    const lockPath = lockPathFor(dir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.mkdirSync(lockPath);
+    const old = new Date(Date.now() - 60_000); // stale by any threshold
+    fs.utimesSync(lockPath, old, old);
+    const res = appendMemory(dir, baseInput());
+    expect(res.written).toBe(true);
+    expect(readMemories(dir)).toHaveLength(1);
+    expect(fs.existsSync(lockPath)).toBe(false); // stale lock cleaned up
+  });
+
+  it(".mjs appendMemories fails open when the lock is genuinely held", () => {
+    const lockPath = lockPathFor(dir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.mkdirSync(lockPath); // fresh mtime: looks actively held
+    const started = Date.now();
+    const res = appendMemoriesMjs(dir, [baseInput()]);
+    const elapsed = Date.now() - started;
+    expect(res.written).toBe(1); // degraded but wrote
+    expect(elapsed).toBeGreaterThanOrEqual(600); // backoff 100+200+400 before degrading
+    fs.rmdirSync(lockPath);
+  });
+
+  it(".mjs and TS writers agree on the lock path", () => {
+    // Hold the lock the way the .mjs mutex does; the TS side must contend on it
+    // (observable as either a wait or a degradation — never a crash) and the
+    // stale-steal path must clean it up.
+    const lockPath = lockPathFor(dir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.mkdirSync(lockPath);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockPath, old, old);
+    const res = appendMemoriesMjs(dir, [baseInput({ text: "mjs row" })]);
+    expect(res.written).toBe(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
+    const res2 = appendMemory(dir, baseInput({ text: "ts row" }));
+    expect(res2.written).toBe(true);
+    expect(readMemories(dir)).toHaveLength(2);
+  });
+});

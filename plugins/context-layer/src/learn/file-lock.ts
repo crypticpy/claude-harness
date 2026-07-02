@@ -11,9 +11,9 @@
  * - Graceful degradation on lock failures
  */
 
-import * as lockfile from 'proper-lockfile';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as lockfile from "proper-lockfile";
+import * as fs from "fs";
+import * as path from "path";
 
 // =============================================================================
 // Types
@@ -123,7 +123,7 @@ function logWarning(message: string): void {
 export async function withFileLock<T>(
   filePath: string,
   fn: () => Promise<T> | T,
-  options?: LockOptions
+  options?: LockOptions,
 ): Promise<T> {
   const lockDir = ensureDirectoryExists(filePath);
   const lockOptions = buildLockfileOptions(options);
@@ -138,7 +138,9 @@ export async function withFileLock<T>(
   } catch (error) {
     // Lock acquisition failed - log warning and proceed anyway
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logWarning(`Failed to acquire lock for ${filePath}: ${errorMessage}. Proceeding without lock.`);
+    logWarning(
+      `Failed to acquire lock for ${filePath}: ${errorMessage}. Proceeding without lock.`,
+    );
   }
 
   try {
@@ -150,7 +152,10 @@ export async function withFileLock<T>(
       try {
         await release();
       } catch (releaseError) {
-        const errorMessage = releaseError instanceof Error ? releaseError.message : String(releaseError);
+        const errorMessage =
+          releaseError instanceof Error
+            ? releaseError.message
+            : String(releaseError);
         logWarning(`Failed to release lock for ${filePath}: ${errorMessage}`);
       }
     }
@@ -158,10 +163,21 @@ export async function withFileLock<T>(
 }
 
 /**
+ * Block the current thread for `ms` milliseconds (no event loop required).
+ */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
  * Synchronous version of withFileLock.
  *
  * Acquires a lock, executes a function, and releases the lock.
  * If lock acquisition fails, proceeds with a warning (graceful degradation).
+ *
+ * proper-lockfile's sync API rejects any `retries` option, so retries are
+ * implemented here as a manual loop: each attempt calls lockSync with
+ * retries disabled, sleeping with exponential backoff between attempts.
  *
  * @param filePath - Path to the file to lock (locks its parent directory)
  * @param fn - Function to execute while holding the lock
@@ -179,22 +195,33 @@ export async function withFileLock<T>(
 export function withFileLockSync<T>(
   filePath: string,
   fn: () => T,
-  options?: LockOptions
+  options?: LockOptions,
 ): T {
   const lockDir = ensureDirectoryExists(filePath);
-  const lockOptions = buildLockfileOptions(options);
+  const opts = { ...DEFAULT_OPTIONS, ...options };
 
   let release: (() => void) | null = null;
   let lockAcquired = false;
 
-  try {
-    // Attempt to acquire lock synchronously
-    release = lockfile.lockSync(lockDir, lockOptions);
-    lockAcquired = true;
-  } catch (error) {
-    // Lock acquisition failed - log warning and proceed anyway
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logWarning(`Failed to acquire lock for ${filePath}: ${errorMessage}. Proceeding without lock.`);
+  for (let attempt = 0; attempt <= opts.retries && !lockAcquired; attempt++) {
+    try {
+      release = lockfile.lockSync(lockDir, {
+        stale: opts.stale,
+        realpath: false,
+      });
+      lockAcquired = true;
+    } catch (error) {
+      if (attempt < opts.retries) {
+        sleepSync(opts.retryDelay * Math.pow(2, attempt)); // 100, 200, 400
+      } else {
+        // Lock acquisition failed - log warning and proceed anyway
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        logWarning(
+          `Failed to acquire lock for ${filePath}: ${errorMessage}. Proceeding without lock.`,
+        );
+      }
+    }
   }
 
   try {
@@ -206,7 +233,10 @@ export function withFileLockSync<T>(
       try {
         release();
       } catch (releaseError) {
-        const errorMessage = releaseError instanceof Error ? releaseError.message : String(releaseError);
+        const errorMessage =
+          releaseError instanceof Error
+            ? releaseError.message
+            : String(releaseError);
         logWarning(`Failed to release lock for ${filePath}: ${errorMessage}`);
       }
     }

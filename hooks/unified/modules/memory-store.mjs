@@ -12,7 +12,16 @@
  */
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { contextPaths, ensureDir } from './storage-paths.mjs';
 
@@ -147,9 +156,62 @@ export function readMemories(projectDir) {
   return out;
 }
 
+/** Block the current thread for ms milliseconds (no event loop required). */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Minimal cross-process mutex, on-disk compatible with the TS side's
+ * proper-lockfile convention: both runtimes contend on mkdir of
+ * `<dirname(file)>.lock`. No npm deps exist in the hook runtime, so this is a
+ * hand-rolled mkdir lock with exponential backoff (100/200/400ms) and 10s
+ * staleness (proper-lockfile touches a held lock's mtime every 5s, so an
+ * actively-held TS lock never looks stale here). Fail-open: after retries the
+ * fn runs unlocked — a raced duplicate row is self-healed by pruneMemories'
+ * duplicate-id collapse.
+ */
+function withLockSync(file, fn) {
+  const lockPath = dirname(file) + '.lock';
+  const retries = 3;
+  const retryDelay = 100;
+  const staleMs = 10000;
+  let acquired = false;
+  for (let attempt = 0; attempt <= retries && !acquired; attempt++) {
+    try {
+      mkdirSync(lockPath);
+      acquired = true;
+    } catch {
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
+          rmdirSync(lockPath); // crashed holder — steal and retry immediately
+          continue;
+        }
+      } catch {
+        continue; // holder released between mkdir failure and stat — retry
+      }
+      if (attempt < retries) sleepSync(retryDelay * 2 ** attempt);
+      else if (process.env.DEBUG)
+        process.stderr.write(`[memory-store] lock busy for ${file}; proceeding without lock\n`);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (acquired) {
+      try {
+        rmdirSync(lockPath);
+      } catch {
+        // best-effort release
+      }
+    }
+  }
+}
+
 /**
  * Validate, dedup by id, append. Returns { written, id, reason?, errors? }.
  * Exact-duplicate (same id present) -> { written: false, reason: 'duplicate' }.
+ * The read→dedup→append window runs under the cross-runtime lock.
  */
 export function appendMemory(projectDir, input) {
   const mem = normalizeMemory(input);
@@ -158,11 +220,13 @@ export function appendMemory(projectDir, input) {
 
   const file = memoriesPath(projectDir);
   ensureDir(dirname(file));
-  for (const existing of readMemories(projectDir)) {
-    if (existing.id === mem.id) return { written: false, id: mem.id, reason: 'duplicate' };
-  }
-  appendFileSync(file, JSON.stringify(mem) + '\n');
-  return { written: true, id: mem.id };
+  return withLockSync(file, () => {
+    for (const existing of readMemories(projectDir)) {
+      if (existing.id === mem.id) return { written: false, id: mem.id, reason: 'duplicate' };
+    }
+    appendFileSync(file, JSON.stringify(mem) + '\n');
+    return { written: true, id: mem.id };
+  });
 }
 
 /**
@@ -182,26 +246,28 @@ export function appendMemories(projectDir, inputs) {
   if (!Array.isArray(inputs) || inputs.length === 0) return { written: 0, results: [] };
   const file = memoriesPath(projectDir);
   ensureDir(dirname(file));
-  const seen = new Set(readMemories(projectDir).map((m) => m.id)); // single read
-  const results = [];
-  const lines = [];
-  for (const input of inputs) {
-    const mem = normalizeMemory(input);
-    const check = validateMemory(mem);
-    if (!check.valid) {
-      results.push({ written: false, id: mem.id, reason: 'invalid', errors: check.errors });
-      continue;
+  return withLockSync(file, () => {
+    const seen = new Set(readMemories(projectDir).map((m) => m.id)); // single read
+    const results = [];
+    const lines = [];
+    for (const input of inputs) {
+      const mem = normalizeMemory(input);
+      const check = validateMemory(mem);
+      if (!check.valid) {
+        results.push({ written: false, id: mem.id, reason: 'invalid', errors: check.errors });
+        continue;
+      }
+      if (seen.has(mem.id)) {
+        results.push({ written: false, id: mem.id, reason: 'duplicate' });
+        continue;
+      }
+      seen.add(mem.id);
+      lines.push(JSON.stringify(mem));
+      results.push({ written: true, id: mem.id });
     }
-    if (seen.has(mem.id)) {
-      results.push({ written: false, id: mem.id, reason: 'duplicate' });
-      continue;
-    }
-    seen.add(mem.id);
-    lines.push(JSON.stringify(mem));
-    results.push({ written: true, id: mem.id });
-  }
-  if (lines.length) appendFileSync(file, lines.join('\n') + '\n'); // single write
-  return { written: lines.length, results };
+    if (lines.length) appendFileSync(file, lines.join('\n') + '\n'); // single write
+    return { written: lines.length, results };
+  });
 }
 
 const DEFAULT_KIND_CAP = 50;
@@ -254,6 +320,9 @@ export function pruneMemories(projectDir, opts = {}) {
     // mis-tagged rows leave without the store knowing command semantics.
     const dropJunk = typeof opts.dropJunk === 'function' ? opts.dropJunk : null;
 
+    // Lock the read→rewrite window so a concurrent append can't land between
+    // the snapshot read and the atomic swap (it would be lost by the rename).
+    return withLockSync(file, () => {
     const byReason = zero();
     let total = 0;
     const survivors = []; // { m, line } in original order
@@ -323,6 +392,7 @@ export function pruneMemories(projectDir, opts = {}) {
       renameSync(tmp, file); // atomic swap so a crash can't truncate the store
     }
     return { kept: kept.length, dropped, byReason };
+    });
   } catch (err) {
     if (process.env.DEBUG) process.stderr.write('[memory-store] prune error: ' + err.message + '\n');
     return { kept: 0, dropped: 0, byReason: zero() };

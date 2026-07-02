@@ -20,6 +20,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 import { contextPaths, ensureDir } from "./paths";
+import { withFileLockSync } from "../learn/file-lock";
 
 export const MEMORY_KINDS = [
   "decision",
@@ -269,13 +270,17 @@ export function appendMemory(
   const file = memoriesPath(projectDir);
   ensureDir(path.dirname(file));
 
-  for (const existing of readMemories(projectDir)) {
-    if (existing.id === mem.id) {
-      return { written: false, id: mem.id, reason: "duplicate" };
+  // Lock across the read→dedup→append window: without it, two processes can
+  // both miss the other's row and append the same id (or interleave writes).
+  return withFileLockSync(file, () => {
+    for (const existing of readMemories(projectDir)) {
+      if (existing.id === mem.id) {
+        return { written: false, id: mem.id, reason: "duplicate" };
+      }
     }
-  }
-  fs.appendFileSync(file, JSON.stringify(mem) + "\n");
-  return { written: true, id: mem.id };
+    fs.appendFileSync(file, JSON.stringify(mem) + "\n");
+    return { written: true, id: mem.id };
+  });
 }
 
 export interface AppendBatchResult {
@@ -300,31 +305,35 @@ export function appendMemories(
   }
   const file = memoriesPath(projectDir);
   ensureDir(path.dirname(file));
-  const seen = new Set(readMemories(projectDir).map((m) => m.id)); // single read
-  const results: AppendResult[] = [];
-  const lines: string[] = [];
-  for (const input of inputs) {
-    const mem = normalizeMemory(input);
-    const check = validateMemory(mem);
-    if (!check.valid) {
-      results.push({
-        written: false,
-        id: mem.id,
-        reason: "invalid",
-        errors: check.errors,
-      });
-      continue;
+  // Same lock discipline as appendMemory: the read→dedup→append window must be
+  // atomic against the other runtime's writer.
+  return withFileLockSync(file, () => {
+    const seen = new Set(readMemories(projectDir).map((m) => m.id)); // single read
+    const results: AppendResult[] = [];
+    const lines: string[] = [];
+    for (const input of inputs) {
+      const mem = normalizeMemory(input);
+      const check = validateMemory(mem);
+      if (!check.valid) {
+        results.push({
+          written: false,
+          id: mem.id,
+          reason: "invalid",
+          errors: check.errors,
+        });
+        continue;
+      }
+      if (seen.has(mem.id)) {
+        results.push({ written: false, id: mem.id, reason: "duplicate" });
+        continue;
+      }
+      seen.add(mem.id);
+      lines.push(JSON.stringify(mem));
+      results.push({ written: true, id: mem.id });
     }
-    if (seen.has(mem.id)) {
-      results.push({ written: false, id: mem.id, reason: "duplicate" });
-      continue;
-    }
-    seen.add(mem.id);
-    lines.push(JSON.stringify(mem));
-    results.push({ written: true, id: mem.id });
-  }
-  if (lines.length) fs.appendFileSync(file, lines.join("\n") + "\n"); // single write
-  return { written: lines.length, results };
+    if (lines.length) fs.appendFileSync(file, lines.join("\n") + "\n"); // single write
+    return { written: lines.length, results };
+  });
 }
 
 const DEFAULT_KIND_CAP = 50;
@@ -395,100 +404,106 @@ export function pruneMemories(
     // Optional caller-injected quality filter (keeps the store classifier-agnostic).
     const dropJunk = typeof opts.dropJunk === "function" ? opts.dropJunk : null;
 
-    const byReason = zero();
-    let total = 0;
-    const seenIds = new Set<string>();
-    const survivors: Array<{ m: TypedMemory; line: string }> = [];
-    for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
-      if (!line.trim()) continue;
-      total++;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        byReason.corrupt++;
-        continue; // drop corrupt
-      }
-      if (!validateMemory(parsed).valid) {
-        byReason.invalid++;
-        continue; // drop schema-invalid
-      }
-      const m = parsed as TypedMemory;
-      if (m.status && m.status !== "active") {
-        byReason.nonActive++;
-        continue; // drop non-active
-      }
-      if (m.expiresAt) {
-        const exp = Date.parse(m.expiresAt);
-        // A present-but-unparseable expiry is corrupt — drop it (fail-safe)
-        // rather than letting NaN <= now (false) keep it in the store forever.
-        if (Number.isNaN(exp) || exp <= now) {
-          byReason.expired++;
-          continue; // drop expired
-        }
-      }
-      if (dropJunk) {
-        let junk = false;
+    // Lock the read→rewrite window so a concurrent append can't land between
+    // the snapshot read and the atomic swap (it would be lost by the rename).
+    return withFileLockSync(file, () => {
+      const byReason = zero();
+      let total = 0;
+      const seenIds = new Set<string>();
+      const survivors: Array<{ m: TypedMemory; line: string }> = [];
+      for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
+        if (!line.trim()) continue;
+        total++;
+        let parsed: unknown;
         try {
-          junk = dropJunk(m) === true;
+          parsed = JSON.parse(line);
         } catch {
-          junk = false; // a throwing predicate never drops
+          byReason.corrupt++;
+          continue; // drop corrupt
         }
-        if (junk) {
-          byReason.junk++;
+        if (!validateMemory(parsed).valid) {
+          byReason.invalid++;
+          continue; // drop schema-invalid
+        }
+        const m = parsed as TypedMemory;
+        if (m.status && m.status !== "active") {
+          byReason.nonActive++;
+          continue; // drop non-active
+        }
+        if (m.expiresAt) {
+          const exp = Date.parse(m.expiresAt);
+          // A present-but-unparseable expiry is corrupt — drop it (fail-safe)
+          // rather than letting NaN <= now (false) keep it in the store forever.
+          if (Number.isNaN(exp) || exp <= now) {
+            byReason.expired++;
+            continue; // drop expired
+          }
+        }
+        if (dropJunk) {
+          let junk = false;
+          try {
+            junk = dropJunk(m) === true;
+          } catch {
+            junk = false; // a throwing predicate never drops
+          }
+          if (junk) {
+            byReason.junk++;
+            continue;
+          }
+        }
+        // Collapse duplicate ids: appendMemory dedups within a process, but a
+        // cross-process append race (the .mjs hook runtime vs the MCP server) can
+        // slip the same content-addressed id in twice. Keep the first, drop the rest.
+        if (seenIds.has(m.id)) {
+          byReason.duplicate++;
           continue;
         }
+        seenIds.add(m.id);
+        survivors.push({ m, line });
       }
-      // Collapse duplicate ids: appendMemory dedups within a process, but a
-      // cross-process append race (the .mjs hook runtime vs the MCP server) can
-      // slip the same content-addressed id in twice. Keep the first, drop the rest.
-      if (seenIds.has(m.id)) {
-        byReason.duplicate++;
-        continue;
-      }
-      seenIds.add(m.id);
-      survivors.push({ m, line });
-    }
 
-    const importance = (m: TypedMemory) => ({
-      conf: m.confidence === "user_confirmed" ? 1 : 0,
-      sev: SEVERITY_RANK[m.severity] ?? 0,
-      createdAt: typeof m.createdAt === "string" ? m.createdAt : "",
-    });
-
-    const groups = new Map<string, Array<{ m: TypedMemory; line: string }>>();
-    for (const s of survivors) {
-      const key = `${s.m.kind}\x00${s.m.scope}`;
-      const g = groups.get(key);
-      if (g) g.push(s);
-      else groups.set(key, [s]);
-    }
-    const keep = new Set<{ m: TypedMemory; line: string }>();
-    for (const g of groups.values()) {
-      if (g.length <= kindCap) {
-        for (const s of g) keep.add(s);
-        continue;
-      }
-      const ranked = [...g].sort((a, b) => {
-        const A = importance(a.m);
-        const B = importance(b.m);
-        if (A.conf !== B.conf) return B.conf - A.conf;
-        if (A.sev !== B.sev) return B.sev - A.sev;
-        return B.createdAt.localeCompare(A.createdAt);
+      const importance = (m: TypedMemory) => ({
+        conf: m.confidence === "user_confirmed" ? 1 : 0,
+        sev: SEVERITY_RANK[m.severity] ?? 0,
+        createdAt: typeof m.createdAt === "string" ? m.createdAt : "",
       });
-      for (const s of ranked.slice(0, kindCap)) keep.add(s);
-    }
 
-    const kept = survivors.filter((s) => keep.has(s));
-    byReason.overCap = survivors.length - kept.length;
-    const dropped = total - kept.length;
-    if (dropped > 0) {
-      const data = kept.length ? kept.map((s) => s.line).join("\n") + "\n" : "";
-      const tmp = file + ".tmp";
-      fs.writeFileSync(tmp, data);
-      fs.renameSync(tmp, file); // atomic swap so a crash can't truncate the store
-    }
-    return { kept: kept.length, dropped, byReason };
+      const groups = new Map<string, Array<{ m: TypedMemory; line: string }>>();
+      for (const s of survivors) {
+        const key = `${s.m.kind}\x00${s.m.scope}`;
+        const g = groups.get(key);
+        if (g) g.push(s);
+        else groups.set(key, [s]);
+      }
+      const keep = new Set<{ m: TypedMemory; line: string }>();
+      for (const g of groups.values()) {
+        if (g.length <= kindCap) {
+          for (const s of g) keep.add(s);
+          continue;
+        }
+        const ranked = [...g].sort((a, b) => {
+          const A = importance(a.m);
+          const B = importance(b.m);
+          if (A.conf !== B.conf) return B.conf - A.conf;
+          if (A.sev !== B.sev) return B.sev - A.sev;
+          return B.createdAt.localeCompare(A.createdAt);
+        });
+        for (const s of ranked.slice(0, kindCap)) keep.add(s);
+      }
+
+      const kept = survivors.filter((s) => keep.has(s));
+      byReason.overCap = survivors.length - kept.length;
+      const dropped = total - kept.length;
+      if (dropped > 0) {
+        const data = kept.length
+          ? kept.map((s) => s.line).join("\n") + "\n"
+          : "";
+        const tmp = file + ".tmp";
+        fs.writeFileSync(tmp, data);
+        fs.renameSync(tmp, file); // atomic swap so a crash can't truncate the store
+      }
+      return { kept: kept.length, dropped, byReason };
+    });
   } catch {
     return { kept: 0, dropped: 0, byReason: zero() };
   }
