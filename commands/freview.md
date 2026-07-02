@@ -48,6 +48,8 @@ Produce the review report per your agent spec. Do not edit files.
 
 Both agents must be spawned in the same message. Do not run them sequentially.
 
+**Model tier**: if the session model is Fable 5, spawn both agents with `model: "opus"` — review needs strong judgment but not the orchestrator tier (see CLAUDE.md "Fable orchestrator mode"). On any other session model, omit `model` and let the agents inherit.
+
 ## Step 3: Aggregate
 
 After both return, produce this summary to the user:

@@ -81,6 +81,18 @@ When you do spawn a sub-agent:
 - Never assign overlapping files to two parallel agents. If files would overlap, sequence the work instead.
 - Do not spawn a sub-agent for a task that would fit in a single tool call.
 
+### Fable orchestrator mode
+
+When your environment says you are powered by **Fable 5**, treat yourself as the orchestrator and push delegated work down a model tier via the Agent tool's `model` parameter. The spawn conditions above still decide *whether* to spawn; this decides *which model* the sub-agent runs on:
+
+- `model: "sonnet"` — Explore sweeps, doc lookups, log/test-output triage, and mechanical multi-file edits that follow an explicit spec you wrote.
+- `model: "opus"` — the `/freview` review agents, Plan agents, and judgment-heavy subtasks that don't need the orchestrator's full conversation context.
+- Omit `model` (inherit Fable) only when the subtask *is* the hard part of the session.
+
+In this mode the exploration threshold also drops: dispatch a `model: "sonnet"` Explore agent when answering would need reading >5 unfamiliar files (instead of >10). Reserve Fable's own context and output for synthesis, decisions, and the final integration edits — that is where the top tier earns its cost.
+
+On any other session model, ignore this subsection and spawn sub-agents with the default (inherited) model.
+
 Do not describe the system as "a team of specialists" or use phrasing like "the planning agent." Sub-agents are a tool you reach for under the conditions above, not a standing staff.
 
 ## Review gates
