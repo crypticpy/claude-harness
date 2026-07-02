@@ -122,6 +122,8 @@ Examples:
 echo $total > /tmp/babysit-pr<N>.cursor
 ```
 
+Advancing the cursor is what unblocks the babysit's merge gate — it refuses to merge while undrained events exist (even pure noise), so always complete this step.
+
 Report to the user, in a single message:
 
 - N events processed (out of M total)

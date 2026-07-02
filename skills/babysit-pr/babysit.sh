@@ -16,6 +16,7 @@
 #   EVENTS_FILE     /tmp/babysit-pr<PR>.events.jsonl  (new-comment events)
 #   CURSOR_FILE     /tmp/babysit-pr<PR>.cursor  (drain offset, reset on start)
 #   RL_BACKOFF      120 (seconds to back off on a GitHub rate-limit error)
+#   START_JITTER_MAX 30 (max random start delay, seconds; 0 disables)
 #
 # Outputs:
 #   <STATE_DIR>/pr-<PR>.json    persistent run state (merged flag, timestamps)
@@ -51,6 +52,11 @@ GH_FAILURE_MAX="${GH_FAILURE_MAX:-10}"
 # Backoff (seconds) when GitHub returns a primary/secondary rate-limit error.
 # Secondary limits punish bursts, so the right response is to wait, not retry.
 RL_BACKOFF="${RL_BACKOFF:-120}"
+# Random start delay so several babysits launched together don't tick in phase
+# forever — N in-phase loops fire 2N calls in the same instant every tick, the
+# exact burst shape GitHub's secondary rate limit punishes. Same TICK period
+# keeps them de-phased once offset. 0 disables (useful in tests).
+START_JITTER_MAX="${START_JITTER_MAX:-30}"
 
 STATE="${STATE_DIR}/pr-${PR}.json"
 DEADLINE=$(( $(date +%s) + CODEX_WINDOW_S ))
@@ -108,6 +114,12 @@ for cmd in gh jq python3; do
 done
 
 log "Starting babysit: PR=#$PR REPO=$REPO BRANCH=$BRANCH WORKTREE=${WORKTREE:-<none>} AUTO_MERGE=$AUTO_MERGE"
+
+if [[ "$START_JITTER_MAX" -gt 0 ]]; then
+  jitter=$(( RANDOM % START_JITTER_MAX ))
+  log "Start jitter: ${jitter}s (de-phases concurrent babysits)"
+  sleep "$jitter"
+fi
 
 while :; do
   now=$(date +%s)
@@ -204,10 +216,18 @@ while :; do
       | map(select(. != "SUCCESS" and . != "SKIPPED" and . != "NEUTRAL"))
       | length
     ')
+    # The comment queue must be fully DRAINED before merging — quiet ticks
+    # measure bot silence, not whether feedback was handled. (PR #2's
+    # CodeRabbit finding landed 5 min before merge and the quiet window
+    # outran it.) /address-pr-comments advances the cursor, including for
+    # events it classifies as noise, so a drain pass always unblocks this.
+    ev_total=$(wc -l < "$EVENTS_FILE" 2>/dev/null | tr -d ' '); ev_total=${ev_total:-0}
+    ev_cursor=$(cat "$CURSOR_FILE" 2>/dev/null); ev_cursor=${ev_cursor:-0}
+    undrained=$(( ev_total - ev_cursor ))
     # Require an affirmative MERGEABLE — the old `!= CONFLICTING` gate let
     # UNKNOWN (GitHub still computing mergeability) through to a doomed merge
     # attempt. UNKNOWN resolves within a tick or two; just wait.
-    if [[ "$non_ok" == "0" && "$pending" == "0" && "$mergeable" == "MERGEABLE" ]]; then
+    if [[ "$non_ok" == "0" && "$pending" == "0" && "$mergeable" == "MERGEABLE" && "$undrained" -le 0 ]]; then
       log "Conditions met — squash-merging PR #$PR with --delete-branch"
       if gh pr merge "$PR" --repo "$REPO" --squash --delete-branch 2>&1 | tee -a "/tmp/babysit-pr${PR}.log"; then
         log "Merge command succeeded; will verify on next tick"
@@ -215,7 +235,10 @@ while :; do
         log "Merge command failed; will retry next tick"
       fi
     else
-      log "Not ready: non_ok=$non_ok pending=$pending mergeable=$mergeable. Waiting."
+      log "Not ready: non_ok=$non_ok pending=$pending mergeable=$mergeable undrained=$undrained. Waiting."
+      if [[ "$undrained" -gt 0 ]]; then
+        log "merge blocked by $undrained undrained comment event(s) — run /address-pr-comments $PR to drain"
+      fi
     fi
   fi
 

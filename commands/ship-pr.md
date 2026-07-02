@@ -159,7 +159,7 @@ Capture the PR URL and number from the command's stdout.
 
 ### 9. Hand off to /babysit-pr
 
-Invoke the `babysit-pr` skill with the PR number (and `--no-merge` if the user passed it). The babysit skill writes the bash poll to `/tmp/`, runs it in background, and the babysit auto-merges with `--delete-branch` once CI is green and review has been quiet for two ticks.
+Invoke the `babysit-pr` skill with the PR number (and `--no-merge` if the user passed it). The babysit skill writes the bash poll to `/tmp/`, runs it in background, and the babysit auto-merges with `--delete-branch` once CI is green, review has been quiet for two ticks, and the comment queue is drained (`/address-pr-comments` advances the drain cursor).
 
 ### 10. Report to the user
 

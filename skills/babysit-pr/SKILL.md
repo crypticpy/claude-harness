@@ -3,9 +3,10 @@ name: babysit-pr
 description: >
   Babysit one PR through bot review (CodeRabbit, Greptile, Sourcery, Codex)
   via a bash poll loop that auto-squash-merges with --delete-branch once CI
-  is green and review has been quiet for two consecutive ticks. New bot
-  comments are persisted to an events.jsonl queue so the main session can
-  drain and address them via /address-pr-comments. Invoke when the user
+  is green, review has been quiet for two consecutive ticks, AND the comment
+  queue has been drained. New bot comments are persisted to an events.jsonl
+  queue so the main session can drain and address them via
+  /address-pr-comments. Invoke when the user
   types /babysit-pr <N>, asks to "babysit", "watch", "monitor", "drive home"
   a PR, or as the hand-off step from /ship-pr. Does NOT open the PR — call
   /ship-pr or open it manually first.
@@ -90,6 +91,8 @@ Also tail the last ~30 lines of `/tmp/babysit-pr<N>.log` so the user sees the fi
 
 When the script logs `NEW [<endpoint>] <user>: <snippet>`, it also writes a JSON event to `/tmp/babysit-pr<N>.events.jsonl`. The main session does NOT auto-react — `/address-pr-comments <N>` is the entry point for processing those events.
 
+**Draining is load-bearing**: the merge gate requires the event queue to be fully drained (cursor == queue length), not merely quiet — quiet ticks measure bot *silence*, not whether feedback was *handled*. Every comment event, including pure noise, blocks the merge until a drain pass advances the cursor. When the log says `merge blocked by N undrained comment event(s)`, run `/address-pr-comments <N>`.
+
 If the user asks "what's happening with PR X" while a babysit is running, do this:
 
 1. `tail -30 /tmp/babysit-pr<N>.log` — show the recent ticks
@@ -128,8 +131,11 @@ So the rule is **spread calls out, don't pile them up**:
 The script itself now cooperates: it polls **one** comment endpoint per tick in
 round-robin (not all three at once), uses `--paginate` on that call (a chatty PR
 pushes older comments past the 30-item first page — without it they're never
-seen), and backs off `RL_BACKOFF` seconds on any rate-limit error via the
-`gh_safe` wrapper. Keep those when editing it.
+seen), backs off `RL_BACKOFF` seconds on any rate-limit error via the `gh_safe`
+wrapper, and sleeps a random ≤30s at startup (`START_JITTER_MAX`) so concurrent
+babysits don't tick in phase — N in-phase loops fire 2N calls in the same
+instant, the exact burst shape the secondary limit punishes. Keep those when
+editing it.
 
 ## Guardrails
 
