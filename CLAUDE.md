@@ -3,7 +3,7 @@
 Priority when trade-offs arise: correctness > maintainability > performance > brevity.
 
 1. **Match effort to task size.** For a task that fits in ≤3 file edits with an obvious fix, execute directly — do not write a plan, do not spawn agents, do not load skills. For larger or ambiguous tasks, use `/plan`.
-2. **Before modifying a function or module, check downstream consumers** with the `impact_check` MCP tool. Proceed without that check only when the change is an additive new file.
+2. **Before modifying a function or module, check downstream consumers** with the `impact_check` MCP tool. Its answer is a deterministic import-graph + scan result and is always marked `complete:false` — treat it as a fast first pass, not an exhaustive one. For a risky rename or signature change, confirm with the built-in LSP tool (`findReferences`) before editing. Proceed without any check only when the change is an additive new file.
 3. **Input handling.** For code that accepts user input, network input, or CMS/API-fed content: validate at the boundary, parameterize SQL, check auth/authz before sensitive operations. Do not add defensive guards inside pure functions.
 4. **Match existing code.** Before using an import path, naming style, or framework pattern, grep the codebase for ≥2 existing examples. If the codebase disagrees with a convention you'd otherwise apply, follow the codebase.
 5. **Self-correct silently.** Fix typos, missing imports, and obvious syntax errors you notice; do not stop to announce each one.
@@ -42,11 +42,16 @@ When not to call Ref:
 - `semantic_lookup` — summary of a file (or batch of files) without reading full contents. Use when you only need to know what a file is for.
 - `impact_check` — list downstream consumers of a file or symbol. Run before editing a function signature, renaming, or deleting.
 - `symbol_context` — get the definition and immediate context for a symbol. Use instead of full-file reads when you only need one function.
-- `chunk_ref` — re-reference a previously fetched code chunk by ID. Use to avoid re-reading the same code.
+- `syntax_check` — tree-sitter parse gate for a file; catches syntax errors without running a compiler.
+- `code_map_outline` — token-cheap directory/file outline from the code map.
 - `what_changed` — recent edits to a file across sessions.
 - `brain_search` — search the memory layer (lessons, conventions, hot-files, file-insights) for prior knowledge about this codebase or prior mistakes.
 - `mistake_log` — record a mistake when you catch one, so it's searchable later.
 - `session_summary` — record a short session summary at natural stopping points.
+- `mission_charter` — set/get/clear the session's steering charter (mission, scope prefixes, constraints). The harness re-injects it verbatim after every compaction and warns on out-of-scope edits.
+- `refactor_manifest` — append-only work-list for long refactors. Items tick off automatically when their file is edited; remaining items re-inject after every compaction.
+
+When a confirmed plan spans ≥6 files or is likely to outlive a compaction, set a `mission_charter` (and a `refactor_manifest` when the work is an enumerable file list) before starting, and clear both when the work is done.
 
 Order of preference: `Ref` for external docs, `context-layer` for this codebase, raw file reads only when neither applies.
 
@@ -88,7 +93,7 @@ Do not describe the system as "a team of specialists" or use phrasing like "the 
 - Use conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`.
 - Run `git status` before committing.
 - Never push without user confirmation. Never force push.
-- Commit only when the user asks for it.
+- Commit smartly as needed to keep all work well organized: commit each logical unit of work when it's complete and tested, one concern per commit, rather than letting large bodies of work pile up uncommitted or waiting to be asked.
 
 ## Behavioral guidelines
 
