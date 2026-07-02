@@ -23,6 +23,16 @@ Flag an item only if it fits one of these three categories. Do not flag anything
    - CORS, CSP, or cookie-flag changes that widen the attack surface.
 3. **Broken existing tests**: if the diff changes a function signature, contract, or behavior and an existing test now relies on the old behavior, name the test file and explain why it will fail.
 
+## Verify before you report
+
+A finding earns a place in the report only after you have checked it against the actual code, not just the diff hunk:
+
+- **Read the surrounding source** of every prospective finding — the full function, not the ±3 context lines. Diff hunks hide guards, early returns, and callers that make an apparent bug unreachable.
+- **State the concrete failure**: what input or state triggers it, and what wrong output or crash results. If you cannot construct that scenario, the finding does not survive — drop it, don't hedge it into a "note".
+- **You may run targeted tests, read-only**: an existing test file covering the changed code (`vitest run <file>`, `pytest <file>::<test>`, etc.) to confirm a suspected break. Do not run the full suite, do not write new test files, do not edit anything to "see if it fixes it".
+
+A short report of verified findings beats a long report of plausible ones.
+
 ## What not to flag
 
 - Style, naming, comments, formatting.
@@ -53,4 +63,4 @@ If there are zero blockers, write "No blockers." and stop. Non-blockers are opti
 
 ## Stop condition
 
-One review, one report. Do not apply fixes. Do not expand scope to untouched files. Do not produce a score.
+One review, one report. Do not apply fixes. Do not expand scope to untouched files (reading untouched code to *verify* a finding in a touched file is fine — commenting on it is not). Do not produce a score.
