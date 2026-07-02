@@ -1,103 +1,97 @@
 /**
  * Shared LLM Call Utility
- * Single implementation of the OpenAI Responses API call pattern
- * used by the rolling-log, precompact, deep-retrospective, and self-evolution modules.
+ * Single implementation of the headless Claude CLI call pattern (`claude -p`)
+ * used by the rolling-log, precompact, distill, deep-retrospective, and
+ * self-evolution modules.
+ *
+ * Replaces the former OpenAI Responses API HTTP call. The CLI authenticates
+ * with the user's existing Claude login, so no API key is needed — the
+ * `apiKey` parameter is retained (and ignored) so all callers work unchanged.
  */
 
-/**
- * Extract the assistant's text from a Responses API result.
- * The Responses API returns an `output` array; visible text lives in the
- * `message` item's `content[]` entries of type `output_text`.
- *
- * @param {any} data - Parsed JSON body from POST /v1/responses
- * @returns {string} Concatenated output text (empty string if none)
- */
-function extractResponsesText(data) {
-    if (typeof data?.output_text === 'string' && data.output_text) {
-        return data.output_text;
-    }
-    if (!Array.isArray(data?.output)) return '';
-    let text = '';
-    for (const item of data.output) {
-        if (item?.type === 'message' && Array.isArray(item.content)) {
-            for (const part of item.content) {
-                if (part?.type === 'output_text' && typeof part.text === 'string') {
-                    text += part.text;
-                }
-            }
-        }
-    }
-    return text;
-}
+import { execFileSync } from 'node:child_process';
+
+// The CLI has no max-output-tokens flag, so llmConfig.maxTokens is ADVISORY:
+// it is forwarded best-effort via CLAUDE_CODE_MAX_OUTPUT_TOKENS, and the
+// prompt itself is capped here so an oversized input can't blow the context
+// window (~175K tokens at 4 chars/token, under haiku's 200K context).
+const MAX_PROMPT_CHARS = 700_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
- * Call an OpenAI-compatible Responses API endpoint.
+ * Call the headless Claude CLI (`claude -p`).
  *
- * @param {string} apiKey - API key for the provider
- * @param {object} llmConfig - Config object with { baseUrl, model, maxTokens, reasoningEffort }
- * @param {string} prompt - The user message to send (sent as the `input`)
+ * There is a single prompt string by design: callers that used to have
+ * system + user halves already concatenate into `prompt` before calling.
+ *
+ * @param {string|null} apiKey - IGNORED (kept for caller compatibility; the CLI uses the user's Claude auth)
+ * @param {object} llmConfig - Config object with { engine, model, maxTokens }
+ * @param {string} prompt - The full prompt to send on stdin
  * @param {object} [options] - Optional settings
- * @param {number} [options.timeoutMs=30000] - Abort after this many ms (0 = no timeout)
- * @param {string} [options.title='Claude Code Hook'] - X-Title header value
+ * @param {number} [options.timeoutMs=120000] - Kill the CLI after this many ms (0 = no timeout)
+ * @param {string} [options.title] - IGNORED (legacy HTTP header value; accepted for caller compatibility)
  * @param {'json'|'text'} [options.format='json'] - 'json' extracts first JSON object, 'text' returns raw content
- * @returns {Promise<object|string|null>} Parsed JSON object, raw text, or null on failure
+ * @param {Function} [options.exec] - Test seam: injectable execFileSync replacement
+ * @returns {Promise<object|string|null>} Parsed JSON object, raw text, or null on failure (fail-open)
  */
 export async function callLlm(apiKey, llmConfig, prompt, options = {}) {
     const {
-        timeoutMs = 30_000,
-        title = 'Claude Code Hook',
+        timeoutMs = DEFAULT_TIMEOUT_MS,
         format = 'json',
+        exec = execFileSync,
     } = options;
 
-    const controller = timeoutMs > 0 ? new AbortController() : null;
-    const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-
-    try {
-        // Responses API body. GPT-5 reasoning models reject `temperature`; reasoning
-        // and visible output share `max_output_tokens`, so callers budget for both.
-        const body = {
-            model: llmConfig.model,
-            input: prompt,
-            max_output_tokens: llmConfig.maxTokens || 2000,
-        };
-        if (llmConfig.reasoningEffort) {
-            body.reasoning = { effort: llmConfig.reasoningEffort };
-        }
-
-        const response = await fetch(`${llmConfig.baseUrl}/responses`, {
-            method: 'POST',
-            signal: controller?.signal,
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://github.com/anthropics/claude-code',
-                'X-Title': title,
-            },
-            body: JSON.stringify(body),
-        });
-
-        if (!response.ok) {
-            throw new Error(`LLM request failed: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const content = extractResponsesText(data).trim();
-        if (!content) {
-            return null; // e.g. status === 'incomplete' (ran out of tokens during reasoning)
-        }
-
-        if (format === 'text') {
-            return content;
-        }
-
-        // Extract first JSON object from response
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
-        }
-
-        return null;
-    } finally {
-        if (timeout) clearTimeout(timeout);
+    let input = String(prompt ?? '');
+    if (input.length > MAX_PROMPT_CHARS) {
+        input = input.slice(0, MAX_PROMPT_CHARS) + '\n...[TRUNCATED]';
     }
+
+    const model = llmConfig?.model || 'haiku';
+    const env = {
+        ...process.env,
+        // Recursion guard: unified-hook.mjs exits immediately when it sees this
+        // flag, so a spawned headless claude never re-enters the hook pipeline.
+        CLAUDE_HOOK_LLM_SPAWNED: '1',
+    };
+    if (llmConfig?.maxTokens) {
+        env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(llmConfig.maxTokens);
+    }
+
+    let stdout;
+    try {
+        stdout = exec('claude', ['-p', '--model', model, '--output-format', 'text'], {
+            input,
+            env,
+            encoding: 'utf-8',
+            timeout: timeoutMs > 0 ? timeoutMs : undefined,
+            maxBuffer: 32 * 1024 * 1024,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+    } catch (err) {
+        // Fail-open: CLI missing (ENOENT), timeout, or non-zero exit → null.
+        if (process.env.DEBUG) {
+            const why = err?.code === 'ENOENT'
+                ? 'claude CLI not found on PATH'
+                : (err?.message || String(err));
+            process.stderr.write('[llm-call] claude -p failed: ' + why + '\n');
+        }
+        return null;
+    }
+
+    const content = String(stdout || '').trim();
+    if (!content) {
+        return null;
+    }
+
+    if (format === 'text') {
+        return content;
+    }
+
+    // Extract first JSON object from response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+    }
+
+    return null;
 }

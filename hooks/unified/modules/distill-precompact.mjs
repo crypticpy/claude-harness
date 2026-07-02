@@ -9,8 +9,8 @@
  *
  * Output is written to the typed memory store tagged
  * `confidence: "llm_distilled"`, `provenance.source: "llm"`. Invalid LLM output
- * is discarded (no poisoning). No API key / no config / no threshold trip are
- * all graceful no-ops.
+ * is discarded (no poisoning). No LLM config / no threshold trip / missing
+ * claude CLI are all graceful no-ops.
  *
  * Dependencies (LLM call, memory writer, transcript parser) are injectable so
  * the gate + proposal handling are unit-testable against a mocked LLM.
@@ -145,7 +145,8 @@ export async function runDistill(event, config = {}, apiKey = null, opts = {}) {
     });
     if (!trigger) return { distilled: false, reason: 'below-threshold', reasons };
 
-    if (!apiKey) return { distilled: false, reason: 'no-api-key', reasons };
+    // No API key gate: the headless claude CLI (llm-call.mjs) uses the user's
+    // Claude auth, so `apiKey` is pass-through only.
     const llmConfig = config.llm?.summarize || config.llm?.recall;
     if (!llmConfig) return { distilled: false, reason: 'no-llm-config', reasons };
 

@@ -303,8 +303,10 @@ function writeLesson(sessionId, diagnosisFields, signals) {
 
 /**
  * Main PreCompact entry point. Single LLM call, two sinks.
+ * The trailing apiKey parameter is retained for compatibility but ignored —
+ * the headless claude CLI (llm-call.mjs) uses the user's Claude auth.
  */
-export async function runPreCompact(event, config, apiKey) {
+export async function runPreCompact(event, config, apiKey = null) {
     try {
         const { session_id, transcript_path } = event;
         if (!session_id || !transcript_path) return;
@@ -318,20 +320,6 @@ export async function runPreCompact(event, config, apiKey) {
 
         // Sessions too short to learn from: skip everything
         if (signals.totalToolCalls < MIN_TOOL_CALLS) return;
-
-        // No API key: preserve existing memory, write signal-only lesson, no LLM call
-        if (!apiKey) {
-            if (hasRealContent(existingMemory)) {
-                writeMemory(memoryPath, session_id, existingMemory, existingMemory);
-            }
-            writeLesson(session_id, {
-                efficiency: null,
-                patterns: signals.errorMessages.slice(0, 5),
-                lessons: ['No API key available for full diagnosis'],
-                improvements: [],
-            }, signals);
-            return;
-        }
 
         // Per-compaction summary (rolling history punch list) runs on the cheaper
         // summarize model; recall is reserved for on-demand recall_history queries.

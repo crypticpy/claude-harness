@@ -14,9 +14,9 @@
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { callLlm } from './llm-call.mjs';
-import { getApiKey } from './api-key.mjs';
+import { recordMemoryRecall } from './event-writer.mjs';
 import { isPoisonedMemory } from './session-memory.mjs';
-import { collectStructuredContext, renderStructuredFacts } from './structured-context.mjs';
+import { collectStructuredContext, renderStructuredFacts, injectedMemoryIds } from './structured-context.mjs';
 
 const EVOLUTION_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'evolution');
 const PROPOSALS_FILE = join(EVOLUTION_DIR, 'proposals.md');
@@ -157,11 +157,6 @@ function aggregatePatterns(entries) {
  * Call the LLM to synthesize patterns into actionable proposals.
  */
 async function synthesizeProposals(aggregated, memories, structured, config) {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-        throw new Error('No API key available for evolution synthesis');
-    }
-
     const llmConfig = config.llm?.recall;
     if (!llmConfig) {
         throw new Error('No recall LLM configured');
@@ -182,6 +177,15 @@ async function synthesizeProposals(aggregated, memories, structured, config) {
     }
 
     const structuredBlock = renderStructuredFacts(structured);
+
+    // Recall telemetry: the typed memories rendered into this prompt count as
+    // recalled — one ledger event for the whole batch (feeds the
+    // never-recalled prune in precompact-reducer).
+    recordMemoryRecall(
+        process.env.CLAUDE_PROJECT_DIR || null,
+        injectedMemoryIds(structured),
+        { via: 'self-evolution' },
+    );
 
     const prompt = `You are a Claude Code harness optimizer. Analyze accumulated session data and propose specific improvements.
 ${structuredBlock ? '\n' + structuredBlock + '\n' : ''}
@@ -246,7 +250,7 @@ Respond with valid JSON:
   }
 }`;
 
-    return await callLlm(apiKey, llmConfig, prompt, {
+    return await callLlm(null, llmConfig, prompt, {
         timeoutMs: 45_000,
         title: 'Claude Code Self-Evolution',
         temperature: 0.4,

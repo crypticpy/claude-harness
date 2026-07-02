@@ -13,14 +13,14 @@
  * this module itself is mechanism, not policy.
  */
 
-import { appendFileSync, readFileSync, existsSync, writeFileSync } from 'fs';
+import { appendFileSync, readFileSync, existsSync, writeFileSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
 import { resolveContextDir, ensureDir } from './storage-paths.mjs';
 
 const KINDS = new Set([
   'tool_call', 'read', 'edit', 'write', 'test', 'lint', 'diagnostic',
-  'error', 'permission', 'decision', 'memory', 'checkpoint', 'index',
+  'error', 'permission', 'decision', 'memory', 'memory_recall', 'checkpoint', 'index',
 ]);
 const OUTCOMES = new Set([
   'ok', 'error', 'denied', 'asked', 'escalated', 'skipped', 'verified',
@@ -145,10 +145,12 @@ export function readEvents(projectDir, { sessionId, sinceTs } = {}) {
 // =============================================================================
 
 // A runner only counts when it is the INVOKED command of a segment, not a word
-// that happens to appear in an echo or a filename — `echo "VITEST CONFIG"` and
-// `cat vitest.config.ts` must NOT classify as test runs.
-const TEST_RUNNERS = /^(?:vitest|jest|pytest|mocha|rspec|ava|playwright|phpunit)\b/;
-const LINT_RUNNERS = /^(?:eslint|tsc|prettier|ruff|mypy|flake8|clippy|gofmt|biome)\b/;
+// that happens to appear in an echo or a filename — `echo "VITEST CONFIG"`,
+// `cat vitest.config.ts`, `ls src/tests`, and `grep test file` must NOT
+// classify as test runs. The runner name must be the WHOLE executable token
+// ((?=\s|$), not \b), so `pytest-helper.sh` / `jest-codemods` don't match.
+const TEST_RUNNERS = /^(?:vitest|jest|pytest|mocha|rspec|ava|playwright|phpunit)(?=\s|$)/;
+const LINT_RUNNERS = /^(?:eslint|tsc|prettier|ruff|mypy|flake8|clippy|gofmt|biome)(?=\s|$)/;
 
 export function classifyBashCommand(command) {
   // Inspect each command segment's leading executable so runner names buried in
@@ -279,14 +281,63 @@ export function mirrorToolEvent(hookEvent, opts = {}) {
 }
 
 // =============================================================================
+// Memory-recall telemetry
+// =============================================================================
+
+/**
+ * Record that a batch of typed memories was injected into model context.
+ * ONE ledger event per injection batch (kind 'memory_recall', meta.ids = the
+ * injected memory ids) — not one per memory. Feeds the never-recalled prune in
+ * precompact-reducer. No-op (returns null) when there is nothing to record.
+ */
+export function recordMemoryRecall(projectDir, ids, opts = {}) {
+  const list = Array.isArray(ids) ? ids.filter((i) => typeof i === 'string' && i) : [];
+  if (!list.length) return null;
+  return writeEvent(
+    {
+      sessionId: opts.sessionId,
+      kind: 'memory_recall',
+      summary: `recalled ${list.length} typed memor${list.length === 1 ? 'y' : 'ies'}${opts.via ? ' via ' + opts.via : ''}`,
+      meta: { ids: list, via: opts.via || null },
+    },
+    { projectDir },
+  );
+}
+
+/**
+ * Fold memory_recall events into a Map of memoryId -> recall count.
+ * Bounded by the ledger's own retention window (90 days by default), so
+ * "zero recalls" means "zero recalls within retention".
+ */
+export function countMemoryRecalls(projectDir) {
+  const counts = new Map();
+  for (const e of readEvents(projectDir)) {
+    if (e.kind !== 'memory_recall') continue;
+    const ids = Array.isArray(e.meta?.ids) ? e.meta.ids : [];
+    for (const id of ids) {
+      if (typeof id === 'string') counts.set(id, (counts.get(id) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
+// =============================================================================
 // Retention
 // =============================================================================
 
-/** Drop events older than retentionDays. Called infrequently (at checkpoint). */
-export function pruneEvents(projectDir, retentionDays = 90) {
+/** Size cap for events.jsonl — beyond retention age, the file itself is bounded. */
+const DEFAULT_MAX_LEDGER_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Drop events older than retentionDays, and — if the survivors still exceed
+ * maxBytes (~10MB default) — keep only the newest whole lines under the cap.
+ * Rewrites atomically (temp + rename). Called infrequently (at checkpoint).
+ */
+export function pruneEvents(projectDir, retentionDays = 90, opts = {}) {
   try {
     const file = eventsFile(projectDir);
     if (!existsSync(file)) return;
+    const maxBytes = typeof opts.maxBytes === 'number' ? opts.maxBytes : DEFAULT_MAX_LEDGER_BYTES;
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     const lines = readFileSync(file, 'utf-8').split('\n');
     const kept = [];
@@ -302,8 +353,28 @@ export function pruneEvents(projectDir, retentionDays = 90) {
         dropped++; // drop corrupt lines while we're here
       }
     }
-    if (dropped > 0) {
-      writeFileSync(file, kept.length ? kept.join('\n') + '\n' : '');
+
+    // Size cap: keep only the newest lines that fit (whole-line boundaries,
+    // newest = end of the append-only file).
+    let sizeTrimmed = 0;
+    if (kept.length) {
+      let bytes = 0;
+      let start = kept.length;
+      for (let i = kept.length - 1; i >= 0; i--) {
+        const b = Buffer.byteLength(kept[i], 'utf-8') + 1; // +1 for the newline
+        if (bytes + b > maxBytes) break;
+        bytes += b;
+        start = i;
+      }
+      sizeTrimmed = start;
+      if (sizeTrimmed > 0) kept.splice(0, sizeTrimmed);
+    }
+
+    if (dropped > 0 || sizeTrimmed > 0) {
+      const data = kept.length ? kept.join('\n') + '\n' : '';
+      const tmp = file + '.tmp';
+      writeFileSync(tmp, data);
+      renameSync(tmp, file); // atomic swap so a crash can't corrupt the ledger
     }
   } catch (err) {
     if (process.env.DEBUG) process.stderr.write('[event-writer] prune error: ' + err.message + '\n');

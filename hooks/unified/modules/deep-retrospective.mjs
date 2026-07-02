@@ -18,8 +18,9 @@
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { join, basename } from 'path';
 import { callLlm } from './llm-call.mjs';
-import { getApiKey } from './api-key.mjs';
-import { collectStructuredContext, renderStructuredFacts } from './structured-context.mjs';
+import { recordMemoryRecall } from './event-writer.mjs';
+import { readFileEditsDb } from './rolling-log.mjs';
+import { collectStructuredContext, renderStructuredFacts, injectedMemoryIds } from './structured-context.mjs';
 
 const CLAUDE_HOME = join(process.env.HOME, '.claude');
 const RETRO_DIR = join(CLAUDE_HOME, 'hooks', 'unified', 'evolution');
@@ -166,12 +167,10 @@ function extractSessionMemories() {
  * Returns: most-edited files, churn patterns, cross-session hotspots.
  */
 function extractFileEditPatterns() {
-    const dbPath = join(CLAUDE_HOME, 'hooks', 'unified', 'logs', 'file-edits.json');
-    if (!existsSync(dbPath)) return null;
-
+    // Folded view of the legacy file-edits.json base + the append-only sidecar.
     let db;
-    try { db = JSON.parse(readFileSync(dbPath, 'utf-8')); } catch (_) { return null; }
-    if (!db.files) return null;
+    try { db = readFileEditsDb(); } catch (_) { return null; }
+    if (!db?.files || Object.keys(db.files).length === 0) return null;
 
     const files = Object.entries(db.files);
     const totalEdits = files.reduce((sum, [_, f]) => sum + (f.editCount || 0), 0);
@@ -523,15 +522,21 @@ IMPORTANT:
  * Call the LLM for deep synthesis.
  */
 async function synthesize(aggregated, config) {
-    const apiKey = getApiKey();
-    if (!apiKey) throw new Error('No API key available');
-
     const llmConfig = config.llm?.recall;
     if (!llmConfig) throw new Error('No recall LLM configured');
 
     const prompt = buildSynthesisPrompt(aggregated);
 
-    return await callLlm(apiKey, llmConfig, prompt, {
+    // Recall telemetry: the typed memories rendered into this prompt count as
+    // recalled — one ledger event for the whole batch (feeds the
+    // never-recalled prune in precompact-reducer).
+    recordMemoryRecall(
+        process.env.CLAUDE_PROJECT_DIR || null,
+        injectedMemoryIds(aggregated.structured),
+        { via: 'deep-retrospective' },
+    );
+
+    return await callLlm(null, llmConfig, prompt, {
         timeoutMs: 60_000,
         title: 'Claude Code Deep Retrospective',
         temperature: 0.5,

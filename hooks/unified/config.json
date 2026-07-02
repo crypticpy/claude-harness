@@ -4,20 +4,16 @@
 
   "llm": {
     "recall": {
-      "provider": "openai",
-      "model": "gpt-5.4-mini",
-      "baseUrl": "https://api.openai.com/v1",
+      "engine": "claude-cli",
+      "model": "haiku",
       "maxTokens": 25000,
-      "reasoningEffort": "medium",
-      "description": "On-demand recall model (Responses API): recall_history queries, deep-retrospective, self-evolution. maxTokens covers reasoning + visible output."
+      "description": "On-demand recall model (headless `claude -p`, user's Claude auth — no API key): recall_history queries, deep-retrospective, self-evolution. maxTokens is ADVISORY — forwarded via CLAUDE_CODE_MAX_OUTPUT_TOKENS; llm-call.mjs caps the prompt itself."
     },
     "summarize": {
-      "provider": "openai",
-      "model": "gpt-5-mini",
-      "baseUrl": "https://api.openai.com/v1",
+      "engine": "claude-cli",
+      "model": "haiku",
       "maxTokens": 8000,
-      "reasoningEffort": "low",
-      "description": "Per-compaction session summary (Responses API): the rolling-history punch list + diagnosis written by precompact-llm. maxTokens covers reasoning + visible output."
+      "description": "Per-compaction session summary (headless `claude -p`): the rolling-history punch list + diagnosis written by precompact-llm, and the threshold-gated distiller. maxTokens is ADVISORY (see recall)."
     }
   },
 
@@ -82,7 +78,7 @@
   },
 
   "puntax": {
-    "description": "PUNTAX v2 settings. Per-subsystem env overrides: PUNTAX_CONTEXT_ROUTER, PUNTAX_EVENT_LEDGER, PUNTAX_PRECOMPACT_MODE, PUNTAX_CODE_MAP, PUNTAX_LSP, PUNTAX_LLM_DISTILLATION. The permission layer (cf-approve) is intentionally untouched in v2; there is no permission governor block.",
+    "description": "PUNTAX v2 settings. Per-subsystem env overrides: PUNTAX_CONTEXT_ROUTER, PUNTAX_EVENT_LEDGER, PUNTAX_PRECOMPACT_MODE, PUNTAX_CODE_MAP, PUNTAX_LLM_DISTILLATION. The permission layer (cf-approve) is intentionally untouched in v2; there is no permission governor block.",
     "contextRouter": {
       "enabled": true,
       "budgets": {
@@ -110,17 +106,14 @@
       }
     },
     "llmDistillation": {
-      "enabled": false,
-      "model": "gpt-5-mini",
+      "enabled": true,
+      "model": "haiku",
       "maxTokens": 4000
     },
     "codeMap": {
       "enabled": true,
       "dbPath": ".claude/context-layer/code-map.db",
-      "backendOrder": ["lsp", "tree-sitter", "regex"]
-    },
-    "lsp": {
-      "enabled": true
+      "backendOrder": ["tree-sitter", "regex"]
     }
   }
 }

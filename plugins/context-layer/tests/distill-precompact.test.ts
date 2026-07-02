@@ -179,20 +179,37 @@ describe("runDistill — gated end-to-end against a mocked LLM", () => {
     expect(mems[0].provenance.source).toBe("llm");
   });
 
-  it("is a no-op with no API key (graceful)", async () => {
-    let called = false;
-    const callLlm = async () => {
-      called = true;
-      return { memories: [] };
-    };
+  it("distills with a null apiKey (headless claude CLI needs no key)", async () => {
+    const callLlm = async () => ({
+      memories: [
+        { kind: "gotcha", scope: "project", text: "no key needed", severity: "low" },
+      ],
+    });
     const res = await runDistill(event(), config, null, {
       checkpoint,
       projectDir: dir,
       thresholds: THRESHOLDS,
       deps: { parseTranscript, callLlm },
     });
+    expect(res.distilled).toBe(true);
+    expect(res.written).toBe(1);
+    expect(readMemories(dir)).toHaveLength(1);
+  });
+
+  it("is a no-op with no LLM config (graceful)", async () => {
+    let called = false;
+    const callLlm = async () => {
+      called = true;
+      return { memories: [] };
+    };
+    const res = await runDistill(event(), {}, null, {
+      checkpoint,
+      projectDir: dir,
+      thresholds: THRESHOLDS,
+      deps: { parseTranscript, callLlm },
+    });
     expect(res.distilled).toBe(false);
-    expect(res.reason).toBe("no-api-key");
+    expect(res.reason).toBe("no-llm-config");
     expect(called).toBe(false);
     expect(readMemories(dir)).toHaveLength(0);
   });

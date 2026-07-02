@@ -177,14 +177,11 @@ for fmt in black gofmt rustfmt prettier; do
     fi
 done
 
-# OpenRouter API key (used by hooks for LLM calls)
-if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
-    ok "OPENROUTER_API_KEY set"
-elif [[ -f "$HOME/.claude-code-fast-permission-hook/config.json" ]]; then
-    ok "API key available via config file"
+# claude CLI (used by hooks for LLM calls via headless `claude -p`)
+if command -v claude >/dev/null 2>&1; then
+    ok "claude CLI found — hook LLM features (session memory, trace diagnosis, evolution) available"
 else
-    warn "No OPENROUTER_API_KEY — session memory, trace diagnosis, and evolution will run without LLM"
-    echo "       Set OPENROUTER_API_KEY in your shell profile for full functionality"
+    warn "claude CLI not on PATH — session memory, trace diagnosis, and evolution will run without LLM"
 fi
 
 # ── Verify hook system loads ─────────────────────────────────

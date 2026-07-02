@@ -24,6 +24,7 @@ import { readMemories } from './memory-store.mjs';
 
 const MAX_CHECKPOINTS = 12;
 const MAX_LIST = 20;
+const MAX_RENDERED_MEMORIES = 12;
 
 const EMPTY = {
   available: false,
@@ -135,7 +136,7 @@ export function collectStructuredContext(projectDir) {
   const topMemories = [...memories]
     .sort((a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0))
     .slice(0, 15)
-    .map((m) => ({ kind: m.kind, scope: m.scope, severity: m.severity, confidence: m.confidence, text: m.text }));
+    .map((m) => ({ id: m.id, kind: m.kind, scope: m.scope, severity: m.severity, confidence: m.confidence, text: m.text }));
 
   return {
     available: true,
@@ -186,11 +187,24 @@ export function renderStructuredFacts(structured) {
   }
   if (structured.topMemories.length) {
     lines.push('', 'Top typed memories (by severity):');
-    for (const m of structured.topMemories.slice(0, 12)) {
+    for (const m of structured.topMemories.slice(0, MAX_RENDERED_MEMORIES)) {
       lines.push(`- [${m.kind}/${m.severity}/${m.confidence}] ${m.text}`);
     }
   }
   return lines.join('\n');
 }
 
-export default { readCheckpoints, collectStructuredContext, renderStructuredFacts };
+/**
+ * Ids of the typed memories renderStructuredFacts actually injects (the same
+ * slice it renders). Callers pass these to recordMemoryRecall so the recall
+ * ledger reflects real injections, not the whole store.
+ */
+export function injectedMemoryIds(structured) {
+  if (!structured || !structured.available) return [];
+  return (structured.topMemories || [])
+    .slice(0, MAX_RENDERED_MEMORIES)
+    .map((m) => m.id)
+    .filter((id) => typeof id === 'string' && id);
+}
+
+export default { readCheckpoints, collectStructuredContext, renderStructuredFacts, injectedMemoryIds };

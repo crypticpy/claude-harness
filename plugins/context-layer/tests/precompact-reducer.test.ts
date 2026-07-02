@@ -8,10 +8,12 @@ import * as path from "path";
 import {
   runReducer,
   deriveFocus,
+  isNeverRecalledJunk,
 } from "../../../hooks/unified/modules/precompact-reducer.mjs";
 import {
   writeEvent,
   readEvents,
+  recordMemoryRecall,
 } from "../../../hooks/unified/modules/event-writer.mjs";
 import {
   appendMemory,
@@ -206,6 +208,83 @@ describe("precompact-reducer (event-ledger mode)", () => {
     expect(checkpoint.source).toBe("transcript"); // no events for L3
     expect(readEvents(projectDir)).toHaveLength(0); // old event pruned
     expect(readMemories(projectDir)).toHaveLength(0); // expired memory pruned
+  });
+});
+
+describe("never-recalled memory prune (composed dropJunk)", () => {
+  const OLD = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+
+  function seed(text: string, over: Record<string, unknown> = {}) {
+    return appendMemory(projectDir, {
+      projectId: "prj_test",
+      kind: "gotcha",
+      scope: "project",
+      text,
+      severity: "low",
+      confidence: "observed",
+      provenance: { source: "event" },
+      createdAt: OLD,
+      ...over,
+    });
+  }
+
+  it("drops only old machine-distilled rows with zero ledger recalls", async () => {
+    seed("old auto never recalled"); // → dropped
+    seed("old llm never recalled", {
+      confidence: "llm_distilled",
+      provenance: { source: "llm" },
+    }); // → dropped
+    const recalled = seed("old auto but recalled") as any;
+    recordMemoryRecall(projectDir, [recalled.id], { via: "test" }); // → kept
+    seed("old user-confirmed", { confidence: "user_confirmed" }); // → kept
+    seed("old user-written", { provenance: { source: "user" } }); // → kept
+    seed("fresh auto never recalled", {
+      createdAt: new Date().toISOString(),
+    }); // → kept (under 30 days)
+
+    await runReducer(
+      { session_id: "NR1", transcript_path: transcriptPath },
+      LEDGER_ON,
+    );
+
+    const texts = readMemories(projectDir)
+      .map((m) => m.text)
+      .sort();
+    expect(texts).toEqual([
+      "fresh auto never recalled",
+      "old auto but recalled",
+      "old user-confirmed",
+      "old user-written",
+    ]);
+  });
+
+  it("isNeverRecalledJunk is conservative on odd rows", () => {
+    const counts = new Map<string, number>();
+    // Unparseable createdAt → keep (fail-safe).
+    expect(
+      isNeverRecalledJunk(
+        {
+          id: "mem_x",
+          createdAt: "not-a-date",
+          confidence: "observed",
+          provenance: { source: "event" },
+        },
+        counts,
+      ),
+    ).toBe(false);
+    // Non-machine provenance (e.g. migration import) → keep.
+    expect(
+      isNeverRecalledJunk(
+        {
+          id: "mem_y",
+          createdAt: OLD,
+          confidence: "imported",
+          provenance: { source: "migration" },
+        },
+        counts,
+      ),
+    ).toBe(false);
+    expect(isNeverRecalledJunk(null, counts)).toBe(false);
   });
 });
 

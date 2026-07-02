@@ -12,9 +12,15 @@ import { readPuntaxConfig } from './puntax-config.mjs';
 import { mirrorToolEvent } from './event-writer.mjs';
 
 const LOG_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'logs');
+// Legacy one-shot JSON DB. No longer written: it is the frozen one-time
+// migration BASE that readFileEditsDb() folds the sidecar onto. Left in place.
 const FILE_EDITS_DB = join(LOG_DIR, 'file-edits.json');
-// Append-only sidecar for LLM-generated edit summaries. Avoids racing with
-// trackFileEdit (which mutates FILE_EDITS_DB synchronously on every edit).
+// Append-only edit-event sidecar (one JSONL line per edit). Replaces the old
+// full read-parse-mutate-rewrite of FILE_EDITS_DB on every edit; the
+// {files: {...}} map is reconstructed on READ by readFileEditsDb().
+const FILE_EDITS_LOG = join(LOG_DIR, 'file-edits.jsonl');
+// Append-only sidecar for LLM-generated edit summaries, merged on read by
+// getFileEditHistory.
 const EDIT_SUMMARIES_LOG = join(LOG_DIR, 'edit-summaries.jsonl');
 
 // Ensure log directory exists
@@ -85,61 +91,78 @@ export async function logOperation(event, config, apiKey) {
 }
 
 /**
- * Track file edits for edit-history warnings
+ * Track file edits for edit-history warnings.
+ * O(1) append to the JSONL sidecar — the map view is rebuilt on read.
  */
 async function trackFileEdit(event, config, apiKey) {
     const { tool_input, session_id } = event;
     const filePath = tool_input?.file_path;
-    
+
     if (!filePath) return;
 
-    // Load file edits DB
+    const timestamp = new Date().toISOString();
+    appendFileSync(
+        FILE_EDITS_LOG,
+        JSON.stringify({ filePath, sessionId: session_id || 'unknown', timestamp }) + '\n'
+    );
+
+    // Background enrichment: summarize the edit if configured (the headless
+    // claude CLI needs no API key, so the flag alone gates it).
+    if (config.rolling_log?.backgroundEnrichment) {
+        // Don't await - let it run in background
+        // Pass the timestamp so the summary can be matched back to this edit on read
+        enrichEditSummary(filePath, timestamp, tool_input, apiKey, config).catch(() => {});
+    }
+}
+
+/**
+ * Reconstruct the `{ files: { <path>: { editCount, sessions, firstEdit,
+ * lastEdit } } }` view by folding the append-only sidecar onto the legacy
+ * file-edits.json base (one-time migration: the old file is read but never
+ * rewritten). Same shape the old DB held, so all readers keep working:
+ * getFileEditHistory here, edit-history.mjs, deep-retrospective.mjs.
+ */
+export function readFileEditsDb() {
     let db = { files: {} };
     if (existsSync(FILE_EDITS_DB)) {
         try {
-            db = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
-        } catch (e) {
-            db = { files: {} };
+            const legacy = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
+            if (legacy && typeof legacy === 'object' && legacy.files && typeof legacy.files === 'object') {
+                db = structuredClone(legacy);
+            }
+        } catch (_) { /* corrupt legacy base — start empty */ }
+    }
+    if (!db.files || typeof db.files !== 'object') db.files = {};
+
+    if (!existsSync(FILE_EDITS_LOG)) return db;
+    let raw;
+    try {
+        raw = readFileSync(FILE_EDITS_LOG, 'utf-8');
+    } catch (_) {
+        return db;
+    }
+    for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        let r;
+        try { r = JSON.parse(line); } catch (_) { continue; }
+        if (!r || typeof r.filePath !== 'string' || !r.filePath) continue;
+
+        let entry = db.files[r.filePath];
+        if (!entry) {
+            entry = db.files[r.filePath] = { editCount: 0, sessions: {}, firstEdit: r.timestamp };
         }
+        entry.editCount = (entry.editCount || 0) + 1;
+        entry.lastEdit = r.timestamp;
+        if (!entry.firstEdit) entry.firstEdit = r.timestamp;
+        if (!entry.sessions || typeof entry.sessions !== 'object') entry.sessions = {};
+
+        const sid = r.sessionId || 'unknown';
+        let sess = entry.sessions[sid];
+        if (!sess) sess = entry.sessions[sid] = { edits: [], count: 0 };
+        sess.edits.push({ timestamp: r.timestamp, summary: null });
+        sess.count = (sess.count || 0) + 1;
     }
-
-    // Initialize file entry
-    if (!db.files[filePath]) {
-        db.files[filePath] = {
-            editCount: 0,
-            sessions: {},
-            firstEdit: new Date().toISOString()
-        };
-    }
-
-    // Track this edit
-    db.files[filePath].editCount++;
-    db.files[filePath].lastEdit = new Date().toISOString();
-    
-    if (!db.files[filePath].sessions[session_id]) {
-        db.files[filePath].sessions[session_id] = {
-            edits: [],
-            count: 0
-        };
-    }
-
-    const edit = {
-        timestamp: new Date().toISOString(),
-        summary: null // Will be enriched in background
-    };
-
-    db.files[filePath].sessions[session_id].edits.push(edit);
-    db.files[filePath].sessions[session_id].count++;
-
-    // Save DB
-    writeFileSync(FILE_EDITS_DB, JSON.stringify(db, null, 2));
-
-    // Background enrichment: summarize the edit if configured
-    if (config.rolling_log?.backgroundEnrichment && apiKey) {
-        // Don't await - let it run in background
-        // Pass the timestamp (not the object) so enrichEditSummary can find the correct entry after re-reading DB
-        enrichEditSummary(filePath, edit.timestamp, tool_input, apiKey, config).catch(() => {});
-    }
+    return db;
 }
 
 /**
@@ -250,10 +273,8 @@ function extractMetadata(toolName, toolInput) {
  * Get file edit history for a specific file in this session
  */
 export function getFileEditHistory(filePath, sessionId) {
-    if (!existsSync(FILE_EDITS_DB)) return null;
-
     try {
-        const db = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
+        const db = readFileEditsDb();
         const fileData = db.files[filePath];
 
         if (!fileData) return null;
@@ -288,79 +309,34 @@ export function getFileEditHistory(filePath, sessionId) {
 function pruneOldEntries(config) {
     try {
         const maxAgeDays = config.rolling_log?.maxAgeDays ?? 30;
-        const maxEntries = config.rolling_log?.maxEntries ?? 10000;
         const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-        // --- Prune file-edits DB ---
-        if (existsSync(FILE_EDITS_DB)) {
-            let db;
-            try {
-                db = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
-            } catch {
-                db = null;
-            }
-
-            if (db?.files) {
-                let changed = false;
-
-                for (const [filePath, fileData] of Object.entries(db.files)) {
-                    // Remove file entries whose lastEdit is older than maxAgeDays
-                    if (fileData.lastEdit && new Date(fileData.lastEdit).getTime() < cutoff) {
-                        delete db.files[filePath];
-                        changed = true;
-                        continue;
-                    }
-
-                    // Within each file, prune sessions with only old edits
-                    if (fileData.sessions) {
-                        for (const [sessionId, sessionData] of Object.entries(fileData.sessions)) {
-                            if (sessionData.edits) {
-                                sessionData.edits = sessionData.edits.filter(
-                                    e => !e.timestamp || new Date(e.timestamp).getTime() >= cutoff
-                                );
-                                sessionData.count = sessionData.edits.length;
-                            }
-                            if (!sessionData.edits || sessionData.edits.length === 0) {
-                                delete fileData.sessions[sessionId];
-                                changed = true;
-                            }
-                        }
-                        // If no sessions remain, remove the file entry
-                        if (Object.keys(fileData.sessions).length === 0) {
-                            delete db.files[filePath];
-                            changed = true;
-                            continue;
-                        }
-                    }
-
-                    // Recompute editCount from remaining edits
-                    const totalEdits = Object.values(fileData.sessions || {})
-                        .reduce((sum, s) => sum + (s.count || 0), 0);
-                    if (totalEdits !== fileData.editCount) {
-                        fileData.editCount = totalEdits;
-                        changed = true;
+        // --- Compact the append-only file-edits sidecar ---
+        // The legacy file-edits.json (if present) is a frozen migration base
+        // and is never rewritten; only sidecar lines age out here. (The old
+        // per-file maxEntries cap no longer applies — retention is age-based.)
+        try {
+            if (existsSync(FILE_EDITS_LOG)) {
+                const lines = readFileSync(FILE_EDITS_LOG, 'utf-8').split('\n');
+                const kept = [];
+                let dropped = 0;
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const r = JSON.parse(line);
+                        const ts = r.timestamp ? new Date(r.timestamp).getTime() : 0;
+                        if (ts >= cutoff) kept.push(line);
+                        else dropped++;
+                    } catch {
+                        dropped++;
                     }
                 }
-
-                // Enforce maxEntries: if total file entries exceed limit, drop oldest
-                const fileKeys = Object.keys(db.files);
-                if (fileKeys.length > maxEntries) {
-                    const sorted = fileKeys.sort((a, b) => {
-                        const aTime = new Date(db.files[a].lastEdit || 0).getTime();
-                        const bTime = new Date(db.files[b].lastEdit || 0).getTime();
-                        return aTime - bTime;
-                    });
-                    const toRemove = sorted.slice(0, fileKeys.length - maxEntries);
-                    for (const key of toRemove) {
-                        delete db.files[key];
-                    }
-                    changed = true;
-                }
-
-                if (changed) {
-                    writeFileSync(FILE_EDITS_DB, JSON.stringify(db, null, 2));
+                if (dropped > 0) {
+                    writeFileSync(FILE_EDITS_LOG, kept.length ? kept.join('\n') + '\n' : '');
                 }
             }
+        } catch {
+            // Skip if we can't compact the sidecar
         }
 
         // --- Prune the edit-summaries sidecar ---
@@ -390,8 +366,11 @@ function pruneOldEntries(config) {
         }
 
         // --- Prune old session log files ---
+        // The two sidecars share LOG_DIR and the .jsonl suffix but age out
+        // per-line above — never unlink them wholesale on stale mtime.
         try {
-            const logFiles = readdirSync(LOG_DIR).filter(f => f.endsWith('.jsonl'));
+            const sidecars = new Set(['file-edits.jsonl', 'edit-summaries.jsonl']);
+            const logFiles = readdirSync(LOG_DIR).filter(f => f.endsWith('.jsonl') && !sidecars.has(f));
             for (const file of logFiles) {
                 const fullPath = join(LOG_DIR, file);
                 try {

@@ -25,6 +25,7 @@ import {
   pruneEvents,
   pruneCheckpoints,
   classifyBashCommand,
+  countMemoryRecalls,
 } from './event-writer.mjs';
 import { ensureDir } from './storage-paths.mjs';
 import { readPuntaxConfig } from './puntax-config.mjs';
@@ -34,6 +35,32 @@ const MIN_TOOL_CALLS = 5;
 const MAX_WORKING_FILES = 8;
 const MAX_ACTIONS = 6;
 const MAX_ERRORS = 5;
+const NEVER_RECALLED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Never-recalled prune predicate (composed into pruneMemories' dropJunk by the
+ * caller — memory-store stays recall-agnostic). Drops a row only when ALL hold:
+ *   (a) older than 30 days,
+ *   (b) zero memory_recall ledger events reference its id, AND
+ *   (c) it was machine-distilled (auto-distill: observed/event, or LLM:
+ *       llm_distilled / provenance llm).
+ * User-written (provenance user/manual) or user-confirmed rows are NEVER
+ * dropped here. Exported for tests.
+ */
+export function isNeverRecalledJunk(m, recallCounts, now = Date.now()) {
+  if (!m || typeof m !== 'object') return false;
+  if (m.confidence === 'user_confirmed') return false;
+  const src = m.provenance?.source;
+  if (src === 'user' || src === 'manual') return false;
+  const machineDistilled =
+    m.confidence === 'llm_distilled' ||
+    src === 'llm' ||
+    (m.confidence === 'observed' && src === 'event');
+  if (!machineDistilled) return false;
+  const created = Date.parse(m.createdAt);
+  if (Number.isNaN(created) || now - created < NEVER_RECALLED_MAX_AGE_MS) return false;
+  return (recallCounts?.get?.(m.id) || 0) === 0;
+}
 
 function appendCheckpoint(projectDir, checkpoint) {
   const file = checkpointsFile(projectDir);
@@ -192,16 +219,22 @@ export async function runReducer(event, config) {
       const retentionDays = puntax.eventLedger.retentionDays;
       pruneEvents(projectDir, retentionDays);
       pruneCheckpoints(projectDir, retentionDays);
-      // Quality filter: an older event classifier mis-tagged compound shell
-      // lines (e.g. `cd x && git status`) as test_command. The current
-      // classifier re-checks each row's text; anything that no longer reads as
-      // a test was never a real test command and is dropped. Legit single or
-      // compound test commands (`npx vitest run`, `cd pkg && npm test`) still
-      // classify as 'test' and survive, so this is zero-false-positive.
+      // Quality filter, two composed predicates (memory-store stays agnostic):
+      //  1. Mis-tagged test_command rows: an older event classifier mis-tagged
+      //     compound shell lines (e.g. `cd x && git status`) as test_command.
+      //     The current classifier re-checks each row's text; anything that no
+      //     longer reads as a test was never a real test command. Legit single
+      //     or compound test commands (`npx vitest run`, `cd pkg && npm test`)
+      //     still classify as 'test' and survive.
+      //  2. Never-recalled machine-distilled rows: >30 days old, zero
+      //     memory_recall ledger events, auto-/llm-distilled provenance.
+      //     User-written/confirmed rows are never dropped.
+      const recallCounts = countMemoryRecalls(projectDir);
       const pruned = pruneMemories(projectDir, {
         dropJunk: (m) =>
-          m.kind === 'test_command' &&
-          classifyBashCommand(m.text || '') !== 'test',
+          (m.kind === 'test_command' &&
+            classifyBashCommand(m.text || '') !== 'test') ||
+          isNeverRecalledJunk(m, recallCounts),
       });
       if (process.env.DEBUG && pruned.dropped > 0) {
         process.stderr.write(

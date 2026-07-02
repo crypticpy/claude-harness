@@ -5,24 +5,20 @@
  * context about previous edits to help Claude understand the history.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
-
-const LOG_DIR = join(process.env.HOME, '.claude', 'hooks', 'unified', 'logs');
-const FILE_EDITS_DB = join(LOG_DIR, 'file-edits.json');
+import { readFileEditsDb } from './rolling-log.mjs';
 
 /**
  * Check if prompt mentions a file that has edit history
  * Returns warning/context if file has been edited before
  */
-export async function checkEditHistory(event, config, apiKey) {
+export async function checkEditHistory(event, config) {
     try {
         const { session_id, prompt } = event;
-        
-        if (!session_id || !prompt) return null;
-        if (!existsSync(FILE_EDITS_DB)) return null;
 
-        const db = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
+        if (!session_id || !prompt) return null;
+
+        const db = readFileEditsDb();
+        if (Object.keys(db.files).length === 0) return null;
         const threshold = config.rolling_log?.summarizeAfterEdits || 2;
 
         // Extract file paths from prompt (basic heuristic)
@@ -124,12 +120,10 @@ function checkHighChurnFiles(db, sessionId, mentionedFiles) {
  * Get detailed history for a specific file (used by MCP tools)
  */
 export function getDetailedFileHistory(filePath, options = {}) {
-    if (!existsSync(FILE_EDITS_DB)) return null;
-
     try {
-        const db = JSON.parse(readFileSync(FILE_EDITS_DB, 'utf-8'));
+        const db = readFileEditsDb();
         const fileData = db.files[filePath];
-        
+
         if (!fileData) return null;
 
         const result = {

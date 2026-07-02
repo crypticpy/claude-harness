@@ -10,6 +10,9 @@ import {
   pruneEvents,
   checkpointsFile,
   pruneCheckpoints,
+  classifyBashCommand,
+  recordMemoryRecall,
+  countMemoryRecalls,
 } from "../../../hooks/unified/modules/event-writer.mjs";
 
 let projectDir: string;
@@ -184,6 +187,39 @@ describe("mirrorToolEvent", () => {
     expect(kindOf("npm run build")).toBe("tool_call");
   });
 
+  it("does NOT classify commands that merely REFERENCE test paths/words", () => {
+    // Regression set for the test_command pollution bug: only an actual test
+    // runner as the invoked executable/verb may classify as 'test'.
+    expect(classifyBashCommand("ls src/tests")).toBe("tool_call");
+    expect(classifyBashCommand("cat foo.test.ts")).toBe("tool_call");
+    expect(classifyBashCommand("grep test file")).toBe("tool_call");
+    expect(classifyBashCommand("mkdir tests")).toBe("tool_call");
+    expect(classifyBashCommand('git commit -m "add tests"')).toBe("tool_call");
+    expect(classifyBashCommand('find . -name "*.test.ts"')).toBe("tool_call");
+    expect(classifyBashCommand("ls | grep test")).toBe("tool_call");
+    // Runner-name-PREFIXED executables are not the runner itself.
+    expect(classifyBashCommand("time pytest-helper.sh")).toBe("tool_call");
+    expect(classifyBashCommand("jest-codemods run")).toBe("tool_call");
+    expect(classifyBashCommand("vitest-preview")).toBe("tool_call");
+  });
+
+  it("classifies real test runners, including compound commands", () => {
+    expect(classifyBashCommand("cd x && npx vitest run")).toBe("test");
+    expect(classifyBashCommand("npx vitest run")).toBe("test");
+    expect(classifyBashCommand("vitest")).toBe("test");
+    expect(classifyBashCommand("jest --coverage")).toBe("test");
+    expect(classifyBashCommand("pytest -q")).toBe("test");
+    expect(classifyBashCommand("go test ./...")).toBe("test");
+    expect(classifyBashCommand("cargo test")).toBe("test");
+    expect(classifyBashCommand("npm test")).toBe("test");
+    expect(classifyBashCommand("pnpm test")).toBe("test");
+    expect(classifyBashCommand("yarn test --watch")).toBe("test");
+    expect(classifyBashCommand("bun test")).toBe("test");
+    expect(classifyBashCommand("rspec spec/models")).toBe("test");
+    expect(classifyBashCommand("phpunit tests/")).toBe("test");
+    expect(classifyBashCommand("npm run test:unit")).toBe("test");
+  });
+
   it("keeps the semantic kind but marks outcome=error on a failure", () => {
     const e: any = mirrorToolEvent(
       {
@@ -230,6 +266,37 @@ describe("mirrorToolEvent", () => {
   });
 });
 
+describe("memory recall telemetry", () => {
+  it("writes ONE memory_recall event per batch with meta.ids", () => {
+    const e: any = recordMemoryRecall(projectDir, ["mem_a", "mem_b"], {
+      via: "self-evolution",
+    });
+    expect(e).not.toBeNull();
+    expect(e.kind).toBe("memory_recall");
+    expect(e.meta.ids).toEqual(["mem_a", "mem_b"]);
+
+    const events = readEvents(projectDir);
+    expect(events).toHaveLength(1); // batch, not per-memory
+    expect(events[0].kind).toBe("memory_recall");
+  });
+
+  it("no-ops on empty or invalid id lists", () => {
+    expect(recordMemoryRecall(projectDir, [])).toBeNull();
+    expect(recordMemoryRecall(projectDir, undefined as any)).toBeNull();
+    expect(recordMemoryRecall(projectDir, [null, 42] as any)).toBeNull();
+    expect(readEvents(projectDir)).toHaveLength(0);
+  });
+
+  it("countMemoryRecalls folds ids across batches", () => {
+    recordMemoryRecall(projectDir, ["mem_a", "mem_b"]);
+    recordMemoryRecall(projectDir, ["mem_a"]);
+    const counts = countMemoryRecalls(projectDir);
+    expect(counts.get("mem_a")).toBe(2);
+    expect(counts.get("mem_b")).toBe(1);
+    expect(counts.get("mem_missing")).toBeUndefined();
+  });
+});
+
 describe("pruneEvents", () => {
   it("drops events older than the retention window", () => {
     writeEvent(
@@ -249,6 +316,36 @@ describe("pruneEvents", () => {
     const remaining = readEvents(projectDir);
     expect(remaining).toHaveLength(1);
     expect(remaining[0].files).toEqual(["fresh"]);
+  });
+
+  it("caps the file size by keeping only the newest whole lines", () => {
+    for (let i = 0; i < 10; i++) {
+      writeEvent(
+        { sessionId: "s", kind: "read", summary: `pad-${i}-${"x".repeat(400)}` },
+        { projectDir },
+      );
+    }
+    const file = eventsFile(projectDir);
+    const before = fs.statSync(file).size;
+    const cap = Math.floor(before / 2);
+
+    pruneEvents(projectDir, 90, { maxBytes: cap });
+
+    expect(fs.statSync(file).size).toBeLessThanOrEqual(cap);
+    const remaining = readEvents(projectDir);
+    expect(remaining.length).toBeGreaterThan(0);
+    expect(remaining.length).toBeLessThan(10);
+    // Newest survive (whole-line boundaries — every survivor still parses).
+    expect(remaining[remaining.length - 1].summary).toContain("pad-9-");
+    expect(remaining[0].summary).not.toContain("pad-0-");
+  });
+
+  it("leaves a small file alone", () => {
+    writeEvent({ sessionId: "s", kind: "read", files: ["a"] }, { projectDir });
+    const file = eventsFile(projectDir);
+    const before = fs.readFileSync(file, "utf-8");
+    pruneEvents(projectDir, 90); // default 10MB cap — nothing to trim
+    expect(fs.readFileSync(file, "utf-8")).toBe(before);
   });
 });
 

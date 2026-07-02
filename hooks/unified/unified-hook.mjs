@@ -6,7 +6,7 @@
  * Implements "Memento architecture" - maintains perfect memory while Claude's context compacts.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, appendFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -20,8 +20,19 @@ if (existsSync(configPath)) {
     config = JSON.parse(readFileSync(configPath, 'utf-8'));
 }
 
-// Shared API key resolution
-import { getApiKey } from './modules/api-key.mjs';
+/**
+ * Append one line per fatal error to ~/.claude/hooks/unified/logs/errors.log
+ * so silent hook deaths are diagnosable. Never throws (logging must not block
+ * the exit path).
+ */
+function logFatal(eventType, err) {
+    try {
+        const logDir = join(process.env.HOME || '.', '.claude', 'hooks', 'unified', 'logs');
+        mkdirSync(logDir, { recursive: true });
+        const line = `${new Date().toISOString()} ${eventType || 'unknown'} ${err?.message || String(err)}\n`;
+        appendFileSync(join(logDir, 'errors.log'), line);
+    } catch (_) { /* never block exit on logging */ }
+}
 
 // Lazy load modules
 async function loadModule(name) {
@@ -29,19 +40,24 @@ async function loadModule(name) {
 }
 
 async function main() {
+    // Recursion guard: llm-call.mjs spawns a headless `claude -p` with this
+    // flag set. That spawned CLI runs the user's hooks too — it must never
+    // re-enter this pipeline (infinite hook→LLM→hook recursion).
+    if (process.env.CLAUDE_HOOK_LLM_SPAWNED === '1') {
+        process.exit(0);
+    }
+
     try {
         // Read hook input
         const input = readFileSync(0, 'utf-8');
         const event = JSON.parse(input);
-        
+
         const eventType = process.argv[2]; // prompt, precompact, post-edit, stop, session-start
-        
+
         if (!eventType) {
             console.error('[UnifiedHook] No event type specified');
             process.exit(0);
         }
-
-        const apiKey = getApiKey();
 
         switch (eventType) {
             case 'prompt': {
@@ -68,7 +84,7 @@ async function main() {
                 if (memory) outputs.push(memory);
 
                 // Edit history warnings (if file being discussed was edited before)
-                const editWarning = await modules[3].checkEditHistory(event, config, apiKey);
+                const editWarning = await modules[3].checkEditHistory(event, config);
                 if (editWarning) outputs.push(editWarning);
 
                 if (outputs.length > 0) {
@@ -103,15 +119,16 @@ async function main() {
                 // is now 'deterministic', so this path is off unless requested.
                 if (puntax.precompact.mode === 'llm') {
                     const module = await loadModule('precompact-llm');
-                    await module.runPreCompact(event, config, apiKey);
+                    await module.runPreCompact(event, config);
                 }
 
-                // External-LLM distillation: opt-in fallback for headless runs
-                // (no interactive model to nudge). Off by default
-                // (PUNTAX_LLM_DISTILLATION), threshold-gated, checkpoint-based.
+                // External-LLM distillation via headless `claude -p`: on by
+                // default (PUNTAX_LLM_DISTILLATION overrides), threshold-gated,
+                // checkpoint-based. No API key needed — the CLI uses the
+                // user's Claude auth.
                 if (puntax.llmDistillation.enabled) {
                     const distill = await loadModule('distill-precompact');
-                    await distill.runDistill(event, config, apiKey, { checkpoint });
+                    await distill.runDistill(event, config, null, { checkpoint });
                 }
                 break;
             }
@@ -128,7 +145,7 @@ async function main() {
                 await modules[0].formatFile(event, config);
 
                 // Log the operation
-                await modules[1].logOperation(event, config, apiKey);
+                await modules[1].logOperation(event, config);
 
                 // Emit impact hint for high-impact paths (printed to stdout so
                 // it surfaces as PostToolUse additional context).
@@ -148,6 +165,17 @@ async function main() {
                 } catch (e) {
                     if (process.env.DEBUG) console.error('[lint]', e);
                 }
+
+                // Steering: tick refactor-manifest items for the edited file and
+                // warn when the edit lands outside the charter scope. Silent
+                // when no charter/manifest exists.
+                try {
+                    const steering = await loadModule('steering');
+                    const steerNote = steering.postEditSteering(event);
+                    if (steerNote) console.log(steerNote);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[steering]', e);
+                }
                 break;
             }
 
@@ -156,7 +184,7 @@ async function main() {
                 // Skip Write|Edit — already logged by post-edit handler
                 if (event.tool_name === 'Write' || event.tool_name === 'Edit') break;
                 const logModule = await loadModule('rolling-log');
-                await logModule.logOperation(event, config, apiKey);
+                await logModule.logOperation(event, config);
                 break;
             }
 
@@ -169,6 +197,30 @@ async function main() {
                 await gatesModule.runGates(event, config);
                 const verifyOutput = await verifyModule.runVerification(event, config);
                 if (verifyOutput) console.log(verifyOutput);
+
+                // Export-surface tripwire: warn when this session's edits
+                // removed/renamed public exports relative to the session's git
+                // baseline. Silent for non-git projects.
+                try {
+                    const surface = await loadModule('export-surface');
+                    const apiWarning = surface.diffExportSurface(event);
+                    if (apiWarning) console.log(apiWarning);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[export-surface]', e);
+                }
+
+                // Flaky-test ledger: flag tests run this session whose outcomes
+                // flip across sessions — don't trust a single pass/fail.
+                try {
+                    const flaky = await loadModule('flaky-tests');
+                    const flakyReport = flaky.buildFlakyReport(
+                        process.env.CLAUDE_PROJECT_DIR || event.cwd || null,
+                        event.session_id,
+                    );
+                    if (flakyReport) console.log(flakyReport);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[flaky-tests]', e);
+                }
                 break;
             }
 
@@ -176,6 +228,15 @@ async function main() {
                 // SessionStart: git status + project context
                 const module = await loadModule('session-start');
                 const output = await module.injectContext(event, config);
+
+                // Pin the git baseline for the export-surface tripwire (no-op
+                // on compaction — the session keeps its original pin).
+                try {
+                    const surface = await loadModule('export-surface');
+                    surface.recordBaseline(event);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[export-surface]', e);
+                }
 
                 const parts = [];
                 if (output) parts.push(output);
@@ -192,6 +253,17 @@ async function main() {
                         const nudgeMod = await loadModule('distill-nudge');
                         const nudge = nudgeMod.buildCompactionNudge(process.env.CLAUDE_PROJECT_DIR || null);
                         if (nudge) parts.push(nudge);
+                    }
+
+                    // Steering: re-inject the mission charter VERBATIM plus the
+                    // remaining refactor-manifest items — the anti-drift anchor
+                    // for very long sessions. Independent of the event ledger.
+                    try {
+                        const steering = await loadModule('steering');
+                        const anchor = steering.buildSteeringInjection(process.env.CLAUDE_PROJECT_DIR || event.cwd || null);
+                        if (anchor) parts.push(anchor);
+                    } catch (e) {
+                        if (process.env.DEBUG) console.error('[steering]', e);
                     }
                 }
 
@@ -225,8 +297,15 @@ async function main() {
         if (process.env.DEBUG) {
             console.error('[UnifiedHook] Error:', err);
         }
-        process.exit(0); // Fail gracefully
+        // Per-module errors above fail open; only a FATAL pipeline error lands
+        // here. Log it and exit 1 — in Claude Code hooks only exit 2 blocks the
+        // operation; other non-zero exits are non-blocking (stderr surfaced).
+        logFatal(process.argv[2], err);
+        process.exit(1);
     }
 }
 
-main().catch(() => process.exit(0));
+main().catch((err) => {
+    logFatal(process.argv[2], err);
+    process.exit(1);
+});
