@@ -6,30 +6,6 @@
 
 export {
   // Core functions
-  getChunkRef,
-  cacheChunk,
-  extractChunk,
-  extractChunksBatch,
-  extractAndCacheChunk,
-  getOrExtractChunk,
-  invalidateChunk,
-  listChunksForFile,
-
-  // Utility exports
-  parseChunkId,
-  computeContentHash,
-  getSymbolLocations,
-
-  // Types
-  type ChunkRefInput,
-  type ChunkRefResult,
-  type CacheChunkInput,
-  type SymbolLocation,
-  type BatchChunk,
-} from "./chunk-ref";
-
-export {
-  // Core functions
   semanticLookup,
   batchSemanticLookup,
   formatLookupResult,
@@ -58,7 +34,6 @@ export {
   type SymbolKind,
   type RelatedSymbol,
   // Utilities
-  getCachedParseResult,
   collectSourceFiles,
   findSymbolInParseResult,
   extractTypeName,
@@ -72,6 +47,7 @@ export {
   type ImpactCheckInput,
   type ImpactResult,
   type Dependent,
+  type ToolResult,
 } from "./impact-check";
 
 export {
@@ -165,3 +141,21 @@ export {
   type OutlineFile,
   type OutlineSymbol,
 } from "./code-map-outline";
+
+export {
+  // Steering charter (anti-drift anchor for long sessions)
+  missionCharter,
+  missionCharterToolDefinition,
+  // Types
+  type MissionCharterInput,
+  type MissionCharterResult,
+} from "./mission-charter";
+
+export {
+  // Append-only refactor work-list
+  refactorManifest,
+  refactorManifestToolDefinition,
+  // Types
+  type RefactorManifestInput,
+  type RefactorManifestResult,
+} from "./refactor-manifest";

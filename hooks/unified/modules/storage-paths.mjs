@@ -46,6 +46,8 @@ export function contextPaths(projectDir) {
     checkpoints: join(dir, 'checkpoints.jsonl'),
     memories: join(dir, 'memories.jsonl'),
     codeMapDb: join(dir, 'code-map.db'),
+    charter: join(dir, 'charter.json'),
+    manifest: join(dir, 'manifest.jsonl'),
     // Legacy v1 brain files (read during migration)
     lessons: join(dir, 'lessons.jsonl'),
     hotFiles: join(dir, 'hot-files.json'),

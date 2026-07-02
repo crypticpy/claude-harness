@@ -76,6 +76,41 @@ describe("mcp-server dispatch — semantic_lookup outlineOnly (live wiring)", ()
     expect(typeof parsed.summary).toBe("string");
     expect(parsed.lineCount).toBeGreaterThan(0);
   });
+
+  it("batch mode resolves RELATIVE paths against projectDir and returns real summaries", async () => {
+    // Regression: the batch branch used to return the raw BatchLookupResult,
+    // whose Maps JSON.stringify to {} — every batch call came back as
+    // {"results":{},"errors":{}} regardless of success.
+    fs.writeFileSync(
+      path.join(projectDir, "other.ts"),
+      "export const delta = 4;\n",
+    );
+    const res = await handleRequest(
+      call("semantic_lookup", { paths: ["mod.ts", "other.ts"], projectDir }),
+    );
+    const parsed = JSON.parse(textOf(res));
+    expect(parsed.results["mod.ts"]).toBeTruthy();
+    expect(typeof parsed.results["mod.ts"].summary).toBe("string");
+    expect(parsed.results["mod.ts"].exports).toContain("alpha");
+    expect(parsed.results["other.ts"].exports).toContain("delta");
+    expect(parsed.errors).toEqual({});
+  });
+
+  it("batch mode reports an explicit per-path error for an unresolvable path", async () => {
+    const res = await handleRequest(
+      call("semantic_lookup", {
+        paths: ["mod.ts", "does-not-exist.ts"],
+        projectDir,
+      }),
+    );
+    const parsed = JSON.parse(textOf(res));
+    // The good path still resolves; the bad one carries a string message —
+    // never a silent empty object.
+    expect(parsed.results["mod.ts"].exports).toContain("alpha");
+    expect(typeof parsed.errors["does-not-exist.ts"]).toBe("string");
+    expect(parsed.errors["does-not-exist.ts"].length).toBeGreaterThan(0);
+    expect(parsed.errors["does-not-exist.ts"]).toContain("not found");
+  });
 });
 
 describe("mcp-server dispatch — symbol_context (live wiring)", () => {
@@ -107,6 +142,9 @@ describe("mcp-server dispatch — symbol_context (live wiring)", () => {
     expect(parsed.kind).toBe("function");
     expect(typeof parsed.signature).toBe("string");
     expect(parsed.location.line).toBe(2); // makeWidget is on the 2nd line
+    // Post-LSP-removal contract: a structural tier answered, never complete.
+    expect(["index", "parse"]).toContain(parsed.provenance.strategy);
+    expect(parsed.provenance.complete).toBe(false);
   });
 
   it("accepts signatureOnly and returns a well-formed compact result", async () => {
@@ -123,8 +161,13 @@ describe("mcp-server dispatch — symbol_context (live wiring)", () => {
     const parsed = JSON.parse(textOf(res));
     expect(parsed.name).toBe("makeWidget");
     expect(typeof parsed.signature).toBe("string");
+    // Bug-3 regression: the signature is the literal declaration (parameters
+    // included), never the bare symbol name.
+    expect(parsed.signature).toContain("input: Widget");
     expect(parsed.related).toEqual([]);
     expect(parsed.documentation).toBe("");
+    expect(["index", "parse"]).toContain(parsed.provenance.strategy);
+    expect(parsed.provenance.complete).toBe(false);
   });
 });
 
@@ -167,5 +210,52 @@ describe("mcp-server dispatch — code_map_outline (live wiring)", () => {
     expect(names).toContain("beta");
     // mod.ts imports from 'path' — an external module, so no in-project edge.
     expect(Array.isArray(mod.imports)).toBe(true);
+  });
+});
+
+describe("mcp-server dispatch — steering tools (live wiring)", () => {
+  it("mission_charter set/get round-trips the mission verbatim", async () => {
+    const mission = "Migrate every call site.\n- no drive-bys";
+    const setRes = await handleRequest(
+      call("mission_charter", {
+        action: "set",
+        mission,
+        scope: ["src/"],
+        constraints: ["keep the public API frozen"],
+        projectPath: projectDir,
+      }),
+    );
+    const set = JSON.parse(textOf(setRes));
+    expect(set.charter.mission).toBe(mission);
+
+    const getRes = await handleRequest(
+      call("mission_charter", { action: "get", projectPath: projectDir }),
+    );
+    const got = JSON.parse(textOf(getRes));
+    expect(got.charter.mission).toBe(mission);
+    expect(got.charter.scope).toEqual(["src/"]);
+  });
+
+  it("refactor_manifest add → status → tick folds through handleRequest", async () => {
+    const addRes = await handleRequest(
+      call("refactor_manifest", {
+        action: "add",
+        items: [{ file: "mod.ts", note: "split exports" }, { file: "src/x.ts" }],
+        projectPath: projectDir,
+      }),
+    );
+    const added = JSON.parse(textOf(addRes));
+    expect(added.addedIds).toHaveLength(2);
+    expect(added.state.remaining).toBe(2);
+
+    const tickRes = await handleRequest(
+      call("refactor_manifest", {
+        action: "tick",
+        ids: [added.addedIds[0]],
+        projectPath: projectDir,
+      }),
+    );
+    const ticked = JSON.parse(textOf(tickRes));
+    expect(ticked.state).toMatchObject({ total: 2, remaining: 1, done: 1 });
   });
 });

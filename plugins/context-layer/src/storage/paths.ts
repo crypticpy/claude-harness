@@ -16,6 +16,8 @@ export interface ContextPaths {
   checkpoints: string;
   memories: string;
   codeMapDb: string;
+  charter: string;
+  manifest: string;
   lessons: string;
   hotFiles: string;
   fileInsights: string;
@@ -49,6 +51,8 @@ export function contextPaths(projectDir: string): ContextPaths {
     checkpoints: path.join(dir, "checkpoints.jsonl"),
     memories: path.join(dir, "memories.jsonl"),
     codeMapDb: path.join(dir, "code-map.db"),
+    charter: path.join(dir, "charter.json"),
+    manifest: path.join(dir, "manifest.jsonl"),
     lessons: path.join(dir, "lessons.jsonl"),
     hotFiles: path.join(dir, "hot-files.json"),
     fileInsights: path.join(dir, "file-insights.json"),

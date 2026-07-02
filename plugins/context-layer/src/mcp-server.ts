@@ -2,7 +2,11 @@
 /**
  * MCP Server for Context Layer Tools
  *
- * Exposes semantic_lookup, impact_check, symbol_context, and chunk_ref as MCP tools.
+ * Exposes the context-layer tools (semantic_lookup, impact_check,
+ * symbol_context, syntax_check, code_map_outline, brain_search, memory_write,
+ * mission_charter, refactor_manifest, …) over MCP stdio. This file is the LIVE
+ * boundary: a tool or param must appear in the inline TOOLS schema AND the
+ * handleRequest switch below, or it does not exist to callers.
  */
 
 import * as readline from "readline";
@@ -12,9 +16,6 @@ import {
   formatLookupResult,
   checkImpact,
   getSymbolContext,
-  getChunkRef,
-  extractAndCacheChunk,
-  extractChunksBatch,
   brainSearch,
   mistakeLog,
   sessionSummary,
@@ -26,6 +27,8 @@ import {
   memoryWrite,
   syntaxCheckTool,
   codeMapOutlineTool,
+  missionCharter,
+  refactorManifest,
   brainToolDefinitions,
   whatChangedToolDefinition,
   puntaxContextToolDefinition,
@@ -35,15 +38,18 @@ import {
   memoryWriteToolDefinition,
   syntaxCheckToolDefinition,
   codeMapOutlineToolDefinition,
+  missionCharterToolDefinition,
+  refactorManifestToolDefinition,
   type SemanticLookupInput,
+  type SemanticLookupResult,
   type ImpactCheckInput,
   type SymbolContextInput,
-  type ChunkRefInput,
   type PuntaxContextInput,
   type MemoryWriteInput,
+  type MissionCharterInput,
+  type RefactorManifestInput,
 } from "./tools";
 import { recordFileAccess } from "./learn";
-import { shutdownLsp, warmLsp } from "./lsp/lsp-service";
 import { warmTreeSitter } from "./indexer/backends/tree-sitter";
 
 interface MCPRequest {
@@ -154,44 +160,6 @@ const TOOLS = [
       required: ["filePath", "symbolName"],
     },
   },
-  {
-    name: "chunk_ref",
-    description:
-      "Reference a code chunk that was previously read. Use chunk IDs from earlier tool results to avoid re-reading code.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        chunkId: {
-          type: "string",
-          description:
-            "ID of a previously cached chunk (from semantic_lookup or symbol_context results)",
-        },
-        filePath: {
-          type: "string",
-          description: "Alternative: file path to get chunk from",
-        },
-        symbolName: {
-          type: "string",
-          description: "Alternative: symbol name to extract as chunk",
-        },
-        symbolNames: {
-          type: "array",
-          items: { type: "string" },
-          description:
-            "Batch: with filePath, extract many symbols in one read+parse. " +
-            "Returns { filePath, chunks: [{ symbolName, content, found }] }.",
-        },
-        startLine: {
-          type: "number",
-          description: "Alternative: start line for range-based chunk",
-        },
-        endLine: {
-          type: "number",
-          description: "Alternative: end line for range-based chunk",
-        },
-      },
-    },
-  },
   // PUNTAX context router (primary tool)
   puntaxContextToolDefinition,
   // Deterministic session checkpoint
@@ -204,6 +172,9 @@ const TOOLS = [
   syntaxCheckToolDefinition,
   // Typed memory write
   memoryWriteToolDefinition,
+  // Long-session steering
+  missionCharterToolDefinition,
+  refactorManifestToolDefinition,
   // Brain tools
   ...brainToolDefinitions,
   // What changed tool
@@ -245,7 +216,6 @@ export async function handleRequest(
         const args =
           (params as { arguments: Record<string, unknown> })?.arguments || {};
         const projectDir = (args.projectDir as string) || process.cwd();
-        const sessionId = (args.sessionId as string) || "mcp-session";
 
         let result: unknown;
 
@@ -281,7 +251,24 @@ export async function handleRequest(
                 })
                 .join("\n\n");
             } else {
-              result = await batchSemanticLookup(paths, projectDir);
+              // Batch full mode: BatchLookupResult holds Maps, which
+              // JSON.stringify serializes to {} (and Error objects to {}), so
+              // returning it raw produced silent empties. Flatten to plain
+              // objects with string error messages — every requested path is
+              // accounted for, explicitly.
+              const batch = await batchSemanticLookup(paths, projectDir);
+              const results: Record<string, SemanticLookupResult> = {};
+              const errors: Record<string, string> = {};
+              for (const p of paths) {
+                const r = batch.results.get(p);
+                if (r) {
+                  results[p] = r;
+                } else {
+                  const err = batch.errors.get(p);
+                  errors[p] = err ? err.message : "not found";
+                }
+              }
+              result = { results, errors };
             }
             break;
           }
@@ -312,46 +299,6 @@ export async function handleRequest(
               signatureOnly: args.signatureOnly === true,
             };
             result = await getSymbolContext(input);
-            break;
-          }
-
-          case "chunk_ref": {
-            if (
-              args.filePath &&
-              Array.isArray(args.symbolNames) &&
-              args.symbolNames.length > 0
-            ) {
-              // Batch: one read + parse for many symbols in the same file.
-              const filePath = args.filePath as string;
-              recordFileAccess(projectDir, filePath, "chunk_ref");
-              const names = (args.symbolNames as unknown[]).filter(
-                (s): s is string => typeof s === "string",
-              );
-              result = { filePath, chunks: await extractChunksBatch(filePath, names) };
-            } else if (args.chunkId) {
-              const input: ChunkRefInput = {
-                chunkId: args.chunkId as string,
-                sessionId,
-              };
-              result = await getChunkRef(input);
-            } else if (args.filePath && args.symbolName) {
-              // Track file access for auto-learn
-              recordFileAccess(
-                projectDir,
-                args.filePath as string,
-                "chunk_ref",
-              );
-              // Extract and cache a new chunk
-              result = await extractAndCacheChunk(
-                args.filePath as string,
-                args.symbolName as string,
-                sessionId,
-              );
-            } else {
-              throw new Error(
-                "Either chunkId or (filePath + symbolName) required",
-              );
-            }
             break;
           }
 
@@ -475,6 +422,29 @@ export async function handleRequest(
             break;
           }
 
+          case "mission_charter": {
+            result = missionCharter({
+              action: args.action as MissionCharterInput["action"],
+              mission: args.mission as string | undefined,
+              scope: args.scope as string[] | undefined,
+              constraints: args.constraints as string[] | undefined,
+              sessionId: args.sessionId as string | undefined,
+              projectPath: (args.projectPath as string) ?? projectDir,
+            });
+            break;
+          }
+
+          case "refactor_manifest": {
+            result = refactorManifest({
+              action: args.action as RefactorManifestInput["action"],
+              items: args.items as RefactorManifestInput["items"],
+              ids: args.ids as string[] | undefined,
+              reason: args.reason as string | undefined,
+              projectPath: (args.projectPath as string) ?? projectDir,
+            });
+            break;
+          }
+
           default:
             throw new Error(`Unknown tool: ${toolName}`);
         }
@@ -536,21 +506,6 @@ async function main() {
     terminal: false,
   });
 
-  // Background-warm the language server for the launch cwd so the first
-  // symbol_context / impact_check doesn't pay the ~500ms tsserver spawn inline.
-  // Fire-and-forget: unlike warmTreeSitter (whose grammars must be ready before
-  // the sync parse path runs), LSP is awaited lazily, so this must NOT block the
-  // readline loop. No-op when LSP is disabled or no server is installed.
-  void warmLsp(process.cwd());
-
-  // Tear down any spawned language servers on signal-driven exit. Stdin EOF is
-  // handled after the loop below; these cover Ctrl-C / kill.
-  for (const sig of ["SIGINT", "SIGTERM"] as const) {
-    process.once(sig, () => {
-      void shutdownLsp().finally(() => process.exit(0));
-    });
-  }
-
   for await (const line of rl) {
     if (!line.trim()) continue;
 
@@ -576,9 +531,6 @@ async function main() {
       );
     }
   }
-
-  // Stdin closed (client disconnected): stop language servers before exit.
-  await shutdownLsp();
 }
 
 // Only start the stdio loop when run as the executable entry point (the deploy
