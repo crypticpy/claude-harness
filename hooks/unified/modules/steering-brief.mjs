@@ -9,8 +9,9 @@
  * always when fresh/same-session; source=resume only when fresh) so long
  * runs re-orient after context loss.
  *
- * Synthesis runs on SONNET via headless `claude -p` (user directive: this is
- * steering content pushed into context — no haiku). It runs in a DETACHED
+ * Synthesis runs on OPUS via headless `claude -p` (user directives: no haiku
+ * — this is steering content pushed into context; and no sonnet as of
+ * 2026-07-02 — a billing bug makes sonnet burn usage). It runs in a DETACHED
  * worker process (this same file, --worker) so the PreCompact hook never
  * blocks on the LLM; the next SessionStart picks up whatever brief exists.
  */
@@ -30,7 +31,7 @@ const MODULE_PATH = fileURLToPath(import.meta.url);
 const DEFAULTS = {
     enabled: true,
     everyNCompactions: 5,
-    model: 'sonnet',
+    model: 'opus',
     maxTokens: 2500,
     timeoutMs: 180_000,
 };
@@ -181,7 +182,7 @@ export function maybeScheduleBrief(event, config = {}, opts = {}) {
 }
 
 /**
- * Worker body: gather inputs, synthesize on sonnet, overwrite the brief file.
+ * Worker body: gather inputs, synthesize on opus, overwrite the brief file.
  * Deps injectable for tests.
  */
 export async function generateBrief(projectDir, sessionId, count, opts = {}) {

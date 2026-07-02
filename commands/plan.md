@@ -22,7 +22,7 @@ State the task in one paragraph. Call out explicit scope and what you will not t
 
 Read the files and symbols needed to produce the plan. Prefer the `context-layer` MCP tools (`semantic_lookup`, `symbol_context`, `impact_check`) over blanket file reads.
 
-If the task requires understanding >10 unfamiliar files (>5 in orchestrator mode — see CLAUDE.md "Orchestrator mode"), dispatch **one** `Explore` sub-agent per independent area of the codebase (architecture, existing similar feature, test patterns). Give each a bounded question and instruct it to return file paths and a short hypothesis, not full contents. In orchestrator mode spawn them with `model: "sonnet"`. Do not dispatch more than 3 Explore agents for any task.
+If the task requires understanding >10 unfamiliar files (>5 in orchestrator mode — see CLAUDE.md "Orchestrator mode"), dispatch **one** `Explore` sub-agent per independent area of the codebase (architecture, existing similar feature, test patterns). Give each a bounded question and instruct it to return file paths and a short hypothesis, not full contents. Spawn them with `model: "opus"` — never sonnet (billing bug, see CLAUDE.md "Orchestrator mode"). Do not dispatch more than 3 Explore agents for any task.
 
 If the task only requires reading a handful of files, read them directly — do not spawn explorers.
 

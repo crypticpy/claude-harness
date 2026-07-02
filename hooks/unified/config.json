@@ -17,9 +17,9 @@
     },
     "retrospective": {
       "engine": "claude-cli",
-      "model": "sonnet",
+      "model": "opus",
       "maxTokens": 25000,
-      "description": "Deep-retrospective synthesis: reads the whole cross-session history and its output steers future work, so it runs on sonnet — never haiku."
+      "description": "Deep-retrospective synthesis: reads the whole cross-session history and its output steers future work, so it runs on opus — never haiku. Was sonnet; moved to opus 2026-07-02 (sonnet billing bug burns usage)."
     }
   },
 
@@ -122,9 +122,9 @@
     "steeringBrief": {
       "enabled": true,
       "everyNCompactions": 5,
-      "model": "sonnet",
+      "model": "opus",
       "maxTokens": 2500,
-      "description": "Evolving mid-session orientation brief (steering-brief.mjs): every Nth compaction of a session, a detached worker synthesizes a <=30-line brief on sonnet (never haiku — this text is injected into context) and OVERWRITES the previous one; injected at SessionStart on compact/resume."
+      "description": "Evolving mid-session orientation brief (steering-brief.mjs): every Nth compaction of a session, a detached worker synthesizes a <=30-line brief on opus (never haiku — this text is injected into context) and OVERWRITES the previous one; injected at SessionStart on compact/resume. Was sonnet; moved to opus 2026-07-02 (sonnet billing bug burns usage)."
     },
     "codeMap": {
       "enabled": true,

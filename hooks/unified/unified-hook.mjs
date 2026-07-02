@@ -124,7 +124,7 @@ async function main() {
                 }
 
                 // Steering brief: every Nth compaction of this session, refresh
-                // the evolving orientation brief in a DETACHED worker (sonnet
+                // the evolving orientation brief in a DETACHED worker (opus
                 // via claude -p) — never blocks the hook. Must run after the
                 // reducer so this compaction's checkpoint is in the count.
                 try {

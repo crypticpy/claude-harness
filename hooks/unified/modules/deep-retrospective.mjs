@@ -525,9 +525,10 @@ async function synthesize(aggregated, config) {
     const llmConfig = config.llm?.recall;
     if (!llmConfig) throw new Error('No recall LLM configured');
     // Synthesis reads the entire cross-session history and its output steers
-    // future work — run it on sonnet, not the cheap recall default (haiku's
-    // hallucination rate is unacceptable here).
-    const synthConfig = config.llm?.retrospective || { ...llmConfig, model: 'sonnet' };
+    // future work — run it on opus, not the cheap recall default (haiku's
+    // hallucination rate is unacceptable here; sonnet is off-rotation as of
+    // 2026-07-02 — billing bug burns usage).
+    const synthConfig = config.llm?.retrospective || { ...llmConfig, model: 'opus' };
 
     const prompt = buildSynthesisPrompt(aggregated);
 
