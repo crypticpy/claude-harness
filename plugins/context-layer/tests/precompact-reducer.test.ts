@@ -258,6 +258,26 @@ describe("never-recalled memory prune (composed dropJunk)", () => {
     ]);
   });
 
+  it("drops junk test_command rows: mis-tagged and legacy un-normalized", async () => {
+    const tc = (text: string) =>
+      seed(text, { kind: "test_command", createdAt: new Date().toISOString() });
+    tc("npx vitest run"); // canonical → kept
+    tc("cd pkg && npm test"); // compound but canonical + still a test → kept
+    tc("cd x && git status"); // mis-tagged, never a test → dropped
+    tc("npx vitest run 2>&1 | tail -30"); // legacy un-normalized → dropped
+    tc('echo "=== suite ===" && npx vitest run'); // legacy banner prefix → dropped
+
+    await runReducer(
+      { session_id: "TC1", transcript_path: transcriptPath },
+      LEDGER_ON,
+    );
+
+    const texts = readMemories(projectDir)
+      .map((m) => m.text)
+      .sort();
+    expect(texts).toEqual(["cd pkg && npm test", "npx vitest run"]);
+  });
+
   it("isNeverRecalledJunk is conservative on odd rows", () => {
     const counts = new Map<string, number>();
     // Unparseable createdAt → keep (fail-safe).

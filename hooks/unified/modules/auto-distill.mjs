@@ -38,8 +38,10 @@ const OUTPUT_FILTERS = new Set([
  * command into many near-duplicate memories. `npx vitest run 2>&1 | tail -30`,
  * `npx vitest run > out.log`, and `npx vitest run` all collapse to `npx vitest run`.
  * Drops, in order: fd-dup redirects (`2>&1`), `&>file`, plain/append redirects
- * (`2>file`, `>file`, `>>file`), then trailing pipe stages into known output
- * filters. Leaves meaningful (non-filter) pipe stages intact. Pure + deterministic.
+ * (`2>file`, `>file`, `>>file`), leading `echo … &&`/`echo … ;` banner segments
+ * (progress decoration, not part of the command), then trailing pipe stages into
+ * known output filters. Leaves meaningful (non-filter) pipe stages intact.
+ * Pure + deterministic.
  */
 export function normalizeCommand(cmd) {
   let s = String(cmd == null ? '' : cmd).trim();
@@ -48,6 +50,13 @@ export function normalizeCommand(cmd) {
     .replace(/\s*\d*>&\d*/g, ' ')        // 2>&1, >&2
     .replace(/\s*&>>?\s*\S+/g, ' ')      // &>file, &>>file
     .replace(/\s*\d*>>?\s*\S+/g, ' ');   // 2>file, >file, >>file, 2>/dev/null
+  // Leading echo banners: `echo "=== suite ===" && npx vitest run` must dedup
+  // with `npx vitest run`. Only LEADING segments joined by `&&`/`;` are safe to
+  // drop — an interior/trailing echo may be control flow (`make test || echo fail`).
+  for (let prev = null; prev !== s; ) {
+    prev = s;
+    s = s.replace(/^echo(?:\s+(?:"[^"]*"|'[^']*'|[^&;|])*)?(?:&&|;)\s*/, '');
+  }
   const parts = s.split(/\s*(?<!\|)\|(?!\|)\s*/); // single pipes only, never `||`
   if (parts.length > 1) {
     const kept = [parts[0]];
