@@ -107,7 +107,7 @@ Do not describe the system as "a team of specialists" or use phrasing like "the 
 
 - Use conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`.
 - Run `git status` before committing.
-- Never push without user confirmation. Never force push.
+- Ship completed work by default: when a logical unit is done and verified (tests/review gates passed, and the PR babysit cleared if the work went through a PR), push it — and run the project's deploy step if it has one you own — without stopping to ask. Stop and report only when something is wrong that you can't fix (failing tests, a deploy that won't converge, unexpected dirty state in the deploy target). Never force push.
 - Commit smartly as needed to keep all work well organized: commit each logical unit of work when it's complete and tested, one concern per commit, rather than letting large bodies of work pile up uncommitted or waiting to be asked.
 
 ## Behavioral guidelines
