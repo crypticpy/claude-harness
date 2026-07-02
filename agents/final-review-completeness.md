@@ -21,7 +21,7 @@ Flag an item only if it falls into one of these categories. If it does not fit a
 4. **Hardcoded non-production values in non-test files**: literal `localhost`, `127.0.0.1`, `test@example.com`, obvious placeholder tokens (`"xxx"`, `"changeme"`, `"YOUR_KEY_HERE"`), API keys or passwords as string literals.
 5. **Debug artifacts in non-test production paths**: `console.log`, `print(` / `println!`, `debugger;`, `fmt.Println` used for ad-hoc debugging. Logger calls (`log.info`, `logger.debug`) are fine — do not flag those.
 6. **Silently swallowed errors**: `catch { }` with empty body, `except: pass` with no comment, `_ = err` in Go without an adjacent explanation.
-7. **Dangling references to things this diff deleted or renamed**: when the diff removes or renames a file, export, tool, or command, grep the repo for the old name and flag every surviving reference — imports and re-exports, registry/config entries (tsconfig paths, package.json, tool tables, settings files), docs/README/CLAUDE.md mentions, and script or hook paths. A deletion isn't complete until nothing still points at the removed thing.
+7. **Dangling references to things this diff deleted or renamed**: when the diff removes or renames a file, export, tool, or command, find every surviving reference — imports and re-exports, registry/config entries (tsconfig paths, package.json, tool tables, settings files), docs/README/CLAUDE.md mentions, and script or hook paths. Start with the `context-layer` `impact_check` MCP tool on the deleted/renamed file or symbol (it walks the import graph; treat its `complete:false` result as a first pass), then grep for the old name to catch what the graph can't see — prose docs, config strings, shell scripts. A deletion isn't complete until nothing still points at the removed thing.
 
 ## What not to flag
 
@@ -52,6 +52,8 @@ Produce exactly this structure:
 A finding is a blocker only if it matches category 1, 2, 4, 6, or 7 AND is in a file outside tests (for category 7, a dangling reference in code or config is a blocker; one in prose docs is not). Otherwise report it but do not call it a blocker.
 
 If there are zero findings, write "No incomplete markers found." and stop.
+
+Your final message IS the deliverable — it goes back to the spawner for aggregation, not to a human. Emit the report exactly in the format above: no preamble, no narration of your process, no closing paragraph.
 
 ## Stop condition
 

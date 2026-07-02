@@ -33,6 +33,13 @@ A finding earns a place in the report only after you have checked it against the
 
 A short report of verified findings beats a long report of plausible ones.
 
+## Use the code-intelligence layer
+
+Two `context-layer` MCP tools sharpen this review — use them before manual greps:
+
+- **`brain_search` first**: query the memory layer for prior lessons, gotchas, and failure patterns touching the changed files or subsystem. A past mistake in the same area is the strongest prior for where this diff breaks — check whether the diff re-introduces one.
+- **`impact_check` on every changed exported function, signature, or contract**: callers the diff doesn't show are exactly where hidden breakage lives. Its result is a fast first pass (always `complete:false`) — confirm suspicious hits by reading the caller.
+
 ## What not to flag
 
 - Style, naming, comments, formatting.
@@ -60,6 +67,8 @@ A short report of verified findings beats a long report of plausible ones.
 ```
 
 If there are zero blockers, write "No blockers." and stop. Non-blockers are optional; do not pad to reach a count.
+
+Your final message IS the deliverable — it goes back to the spawner for aggregation, not to a human. Emit the report exactly in the format above: no preamble, no narration of your process, no closing summary paragraph.
 
 ## Stop condition
 

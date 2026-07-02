@@ -78,20 +78,22 @@ Default is single-agent execution. Spawn a sub-agent only when one of these is t
 When you do spawn a sub-agent:
 
 - Give it one objective, the specific files/paths it owns (exclusively), and the exact output shape you expect back.
+- Carry the context the agent cannot derive on its own: the intent of the change, constraints already decided, and where to look first. Agents start blind — a bare "review the changes" or "explore X" prompt forces them to re-derive scope and miss intent.
+- Tell it its final message is the deliverable returned to you — raw findings/data in the requested shape, not a human-facing narration.
 - Never assign overlapping files to two parallel agents. If files would overlap, sequence the work instead.
 - Do not spawn a sub-agent for a task that would fit in a single tool call.
 
-### Fable orchestrator mode
+### Orchestrator mode (model-tiered delegation)
 
-When your environment says you are powered by **Fable 5**, treat yourself as the orchestrator and push delegated work down a model tier via the Agent tool's `model` parameter. The spawn conditions above still decide *whether* to spawn; this decides *which model* the sub-agent runs on:
+When the session model is a top-tier model — **Fable 5** or any **Opus** (check the "You are powered by" line in your environment) — treat yourself as the orchestrator and push delegated work down a model tier via the Agent tool's `model` parameter. The spawn conditions above still decide *whether* to spawn; this decides *which model* the sub-agent runs on:
 
-- `model: "sonnet"` — Explore sweeps, doc lookups, log/test-output triage, and mechanical multi-file edits that follow an explicit spec you wrote.
-- `model: "opus"` — the `/freview` review agents, Plan agents, and judgment-heavy subtasks that don't need the orchestrator's full conversation context.
-- Omit `model` (inherit Fable) only when the subtask *is* the hard part of the session.
+- `model: "sonnet"` — Explore sweeps, doc lookups, log/test-output triage, and mechanical multi-file edits that follow an explicit spec you wrote. Same choice on Fable and Opus sessions; do not drop below sonnet for code work (haiku only for trivial non-code chores, and only if you'd have used it anyway).
+- Judgment-heavy subtasks (the `/freview` review agents, Plan agents, tricky debugging that doesn't need the orchestrator's full conversation context): `model: "opus"` on a Fable session; omit `model` (inherit) on an Opus session.
+- Omit `model` on a Fable session only when the subtask *is* the hard part of the session.
 
-In this mode the exploration threshold also drops: dispatch a `model: "sonnet"` Explore agent when answering would need reading >5 unfamiliar files (instead of >10). Reserve Fable's own context and output for synthesis, decisions, and the final integration edits — that is where the top tier earns its cost.
+In orchestrator mode the exploration threshold also drops: dispatch a `model: "sonnet"` Explore agent when answering would need reading >5 unfamiliar files (instead of >10). Reserve the orchestrator's own context and output for synthesis, decisions, and the final integration edits — that is where the top tier earns its cost.
 
-On any other session model, ignore this subsection and spawn sub-agents with the default (inherited) model.
+On a Sonnet (or smaller) session model, ignore this subsection and spawn sub-agents with the default (inherited) model.
 
 Do not describe the system as "a team of specialists" or use phrasing like "the planning agent." Sub-agents are a tool you reach for under the conditions above, not a standing staff.
 

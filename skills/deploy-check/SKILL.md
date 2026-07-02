@@ -1,3 +1,13 @@
+---
+name: deploy-check
+description: >
+  One-shot deployment validation — runs the repo's declared health checks
+  (.claude/deploy-check.env) through a scripted curl runner with structured
+  pass/fail output. Invoke when the user types /deploy-check or asks to
+  verify a deploy's health endpoints. Requires the repo to declare its own
+  checks; never guesses URLs.
+---
+
 # /deploy-check — one-shot deployment validation
 
 ## Usage
