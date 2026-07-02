@@ -524,6 +524,10 @@ IMPORTANT:
 async function synthesize(aggregated, config) {
     const llmConfig = config.llm?.recall;
     if (!llmConfig) throw new Error('No recall LLM configured');
+    // Synthesis reads the entire cross-session history and its output steers
+    // future work — run it on sonnet, not the cheap recall default (haiku's
+    // hallucination rate is unacceptable here).
+    const synthConfig = config.llm?.retrospective || { ...llmConfig, model: 'sonnet' };
 
     const prompt = buildSynthesisPrompt(aggregated);
 
@@ -539,7 +543,7 @@ async function synthesize(aggregated, config) {
     // Synthesis reads the whole cross-session aggregation — a headless
     // `claude -p` run on it reliably needs >60s (ETIMEDOUT at 60s was why no
     // .md report was ever generated). This runs ~every 50 sessions; be generous.
-    return await callLlm(null, llmConfig, prompt, {
+    return await callLlm(null, synthConfig, prompt, {
         timeoutMs: 240_000,
         title: 'Claude Code Deep Retrospective',
         temperature: 0.5,
@@ -715,6 +719,13 @@ export async function retrospective(config) {
         healthScore: result.efficiency_report?.overall_health || null,
     };
     appendFileSync(RETRO_HISTORY, JSON.stringify(historyEntry) + '\n');
+
+    // A successful retrospective resets the compaction-cadence counter that
+    // drives the session-start /retrospective suggestion.
+    try {
+        const { resetRetroCounter } = await import('./retro-cadence.mjs');
+        resetRetroCounter();
+    } catch (_) { /* cadence is advisory — never fail the retro over it */ }
 
     return {
         success: true,

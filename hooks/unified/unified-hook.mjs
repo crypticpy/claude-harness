@@ -114,6 +114,26 @@ async function main() {
                 const reducer = await loadModule('precompact-reducer');
                 const checkpoint = await reducer.runReducer(event, config);
 
+                // Compaction cadence: bump the global counter that drives the
+                // /retrospective suggestion at session startup.
+                try {
+                    const cadence = await loadModule('retro-cadence');
+                    cadence.bumpCompactionCount();
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[retro-cadence]', e);
+                }
+
+                // Steering brief: every Nth compaction of this session, refresh
+                // the evolving orientation brief in a DETACHED worker (sonnet
+                // via claude -p) — never blocks the hook. Must run after the
+                // reducer so this compaction's checkpoint is in the count.
+                try {
+                    const briefMod = await loadModule('steering-brief');
+                    briefMod.maybeScheduleBrief(event, config);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[steering-brief]', e);
+                }
+
                 // Legacy full-transcript LLM summary: only when explicitly opted
                 // in via PUNTAX_PRECOMPACT_MODE=llm (v1 narrative memory). Default
                 // is now 'deterministic', so this path is off unless requested.
@@ -175,6 +195,16 @@ async function main() {
                     if (steerNote) console.log(steerNote);
                 } catch (e) {
                     if (process.env.DEBUG) console.error('[steering]', e);
+                }
+
+                // Anti-monolith: once-per-file-per-session nudge when a code
+                // file exceeds the soft line ceiling.
+                try {
+                    const flen = await loadModule('file-length');
+                    const lenNudge = flen.emitLengthNudge(event, config);
+                    if (lenNudge) console.log(lenNudge);
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[file-length]', e);
                 }
                 break;
             }
@@ -264,6 +294,32 @@ async function main() {
                         if (anchor) parts.push(anchor);
                     } catch (e) {
                         if (process.env.DEBUG) console.error('[steering]', e);
+                    }
+                }
+
+                // Steering brief: evolving every-N-compactions orientation.
+                // Injected after compaction (same session or fresh) and on
+                // resume (fresh only) — see steering-brief.mjs.
+                if (event.source === 'compact' || event.source === 'resume') {
+                    try {
+                        const briefMod = await loadModule('steering-brief');
+                        const briefText = briefMod.buildBriefInjection(
+                            process.env.CLAUDE_PROJECT_DIR || event.cwd || null, event);
+                        if (briefText) parts.push(briefText);
+                    } catch (e) {
+                        if (process.env.DEBUG) console.error('[steering-brief]', e);
+                    }
+                }
+
+                // Retrospective cadence: suggest /retrospective at startup once
+                // enough compactions have accumulated since the last one.
+                if (event.source === 'startup' || event.source === 'clear') {
+                    try {
+                        const cadence = await loadModule('retro-cadence');
+                        const suggestion = cadence.buildRetroSuggestion(config);
+                        if (suggestion) parts.push(suggestion);
+                    } catch (e) {
+                        if (process.env.DEBUG) console.error('[retro-cadence]', e);
                     }
                 }
 

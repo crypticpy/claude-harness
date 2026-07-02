@@ -8,6 +8,7 @@ Priority when trade-offs arise: correctness > maintainability > performance > br
 4. **Match existing code.** Before using an import path, naming style, or framework pattern, grep the codebase for ≥2 existing examples. If the codebase disagrees with a convention you'd otherwise apply, follow the codebase.
 5. **Self-correct silently.** Fix typos, missing imports, and obvious syntax errors you notice; do not stop to announce each one.
 6. **Destructive operations.** Before `rm -rf`, `DROP`, `force push`, or any irreversible action: name the operation and what it will affect in one sentence, then proceed only if the user explicitly asked for it.
+7. **Prefer modules over monoliths.** When a code file approaches ~500 lines, treat that as a design prompt: extract cohesive sections (a class, a command group, pure helpers) into their own modules instead of growing it. Never stuff a new feature into an already-long file just because it's open — the edit hook fires a one-time nudge at 700 lines, but don't wait for it.
 
 ## MCP tooling
 
@@ -175,6 +176,15 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+### 5. Finish the Worklist
+
+**A confirmed plan is authorization to complete every item on it.**
+
+- Do not stop at item 4 of 6 to re-confirm. Pause mid-worklist only when something material changed: a step invalidated the plan's assumptions, a destructive action surfaced, or scope genuinely shifted.
+- When a sensible default exists, state the choice you made and proceed — don't ask.
+- Track multi-item work with the task list or `refactor_manifest`, and set a `mission_charter` when the work may outlive a compaction, so context loss never strands remaining items.
+- When two designs cost the same, choose the one you'd want to inherit. Elegance is the tiebreaker, not a luxury.
 
 ---
 

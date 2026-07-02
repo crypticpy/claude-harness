@@ -2,7 +2,7 @@
 description: Run the deep retrospective across all history (prompts, sessions, edits, tool ops) and present the resulting report.
 ---
 
-You are running the periodic cross-session retrospective. Use this ~every 50 sessions, not every session.
+You are running the periodic cross-session retrospective. The harness counts compactions globally (`retro-cadence.mjs`) and suggests this command at session startup once enough work has accumulated (default: 25 compactions since the last retrospective, `evolution.suggestRetroAfterCompactions`). Run it when suggested or on demand — a successful run resets the counter.
 
 ## Step 1: Run
 

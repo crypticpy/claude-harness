@@ -14,6 +14,12 @@
       "model": "haiku",
       "maxTokens": 8000,
       "description": "Per-compaction session summary (headless `claude -p`): the rolling-history punch list + diagnosis written by precompact-llm, and the threshold-gated distiller. maxTokens is ADVISORY (see recall)."
+    },
+    "retrospective": {
+      "engine": "claude-cli",
+      "model": "sonnet",
+      "maxTokens": 25000,
+      "description": "Deep-retrospective synthesis: reads the whole cross-session history and its output steers future work, so it runs on sonnet — never haiku."
     }
   },
 
@@ -62,6 +68,8 @@
   },
 
   "qualityGates": {
+    "maxFileLines": 700,
+    "maxFileLinesComment": "Anti-monolith soft ceiling: post-edit nudge (file-length.mjs) when a code file exceeds this many lines, once per file per session. 0 disables.",
     "onStop": {
       "enabled": true,
       "commands": {
@@ -74,7 +82,8 @@
 
   "evolution": {
     "minSessionsForAnalysis": 3,
-    "description": "Self-evolution loop: lessons.jsonl -> aggregation -> LLM synthesis -> proposals -> user review"
+    "suggestRetroAfterCompactions": 25,
+    "description": "Self-evolution loop: lessons.jsonl -> aggregation -> LLM synthesis -> proposals -> user review. suggestRetroAfterCompactions: session-start suggests /retrospective once this many compactions accumulate since the last one (retro-cadence.mjs; 0 disables)."
   },
 
   "puntax": {
@@ -109,6 +118,13 @@
       "enabled": true,
       "model": "haiku",
       "maxTokens": 4000
+    },
+    "steeringBrief": {
+      "enabled": true,
+      "everyNCompactions": 5,
+      "model": "sonnet",
+      "maxTokens": 2500,
+      "description": "Evolving mid-session orientation brief (steering-brief.mjs): every Nth compaction of a session, a detached worker synthesizes a <=30-line brief on sonnet (never haiku — this text is injected into context) and OVERWRITES the previous one; injected at SessionStart on compact/resume."
     },
     "codeMap": {
       "enabled": true,

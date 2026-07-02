@@ -370,7 +370,10 @@ function pruneOldEntries(config) {
         // per-line above — never unlink them wholesale on stale mtime.
         try {
             const sidecars = new Set(['file-edits.jsonl', 'edit-summaries.jsonl']);
-            const logFiles = readdirSync(LOG_DIR).filter(f => f.endsWith('.jsonl') && !sidecars.has(f));
+            // .length-nudges.json = per-session anti-monolith state (file-length.mjs);
+            // ages out whole-file like session logs.
+            const logFiles = readdirSync(LOG_DIR).filter(f =>
+                (f.endsWith('.jsonl') || f.endsWith('.length-nudges.json')) && !sidecars.has(f));
             for (const file of logFiles) {
                 const fullPath = join(LOG_DIR, file);
                 try {
