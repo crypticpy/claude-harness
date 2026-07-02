@@ -17,6 +17,7 @@ import {
   type SourceKind,
 } from "../context/ranker";
 import { loadPuntaxConfig, type PuntaxConfig } from "../config/puntax-config";
+import { recordMemoryRecall } from "../storage/recall-ledger";
 
 // =============================================================================
 // Contract (docs/08)
@@ -405,6 +406,14 @@ export async function puntaxContext(
   }));
 
   const context = selected.map((s) => `• ${s.text}`).join("\n");
+
+  // Recall telemetry: typed memories that made the selected cut count as
+  // recalled (recordMemoryRecall drops non-mem_* ids, e.g. convention names).
+  recordMemoryRecall(
+    projectDir,
+    sources.filter((s) => s.kind === "memory").map((s) => s.id),
+    { via: "puntax_context", sessionId: input.sessionId },
+  );
 
   // Confidence: an explicit file/symbol match in the top item is "high";
   // any selection is "medium"; nothing relevant is "low".

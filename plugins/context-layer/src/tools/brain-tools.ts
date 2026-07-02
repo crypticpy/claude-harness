@@ -9,6 +9,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { recordMemoryRecall } from "../storage/recall-ledger";
 
 // =============================================================================
 // Types
@@ -49,9 +50,11 @@ interface SearchResult {
   match: string;
   context: string;
   relevance: number;
+  id?: string; // typed-memory id (mem_*) — set only for source "memory"
 }
 
 interface Memory {
+  id?: string;
   kind: string;
   scope?: string;
   text: string;
@@ -271,6 +274,7 @@ export async function brainSearch(
               match: mem.text.slice(0, 80),
               context: `[${mem.kind}/${mem.severity || "info"}] ${mem.text}`,
               relevance,
+              id: mem.id,
             });
           }
         }
@@ -282,10 +286,18 @@ export async function brainSearch(
 
   // Sort by relevance
   results.sort((a, b) => b.relevance - a.relevance);
+  const top = results.slice(0, 10); // Top 10
+
+  // Recall telemetry: only what was actually returned counts as recalled.
+  recordMemoryRecall(
+    projectPath,
+    top.filter((r) => r.source === "memory").map((r) => r.id),
+    { via: "brain_search" },
+  );
 
   return {
     query,
-    results: results.slice(0, 10), // Top 10
+    results: top,
     totalMatches: results.length,
   };
 }
