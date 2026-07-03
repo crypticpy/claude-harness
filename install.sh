@@ -188,7 +188,7 @@ fi
 info "Verifying hook system..."
 
 HOOK_OK=true
-for mod in session-memory session-start trace-diagnosis rolling-log self-evolution deep-retrospective; do
+for mod in session-memory session-start rolling-log self-evolution deep-retrospective; do
     if node -e "import('$CLAUDE_DIR/hooks/unified/modules/${mod}.mjs').then(() => process.exit(0)).catch(() => process.exit(1))" 2>/dev/null; then
         ok "  $mod"
     else
