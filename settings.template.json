@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'$HOME/Library/Application Support/tokf/hooks/pre-tool-use.sh'"
+            "command": "[ -x \"$HOME/Library/Application Support/tokf/hooks/pre-tool-use.sh\" ] && \"$HOME/Library/Application Support/tokf/hooks/pre-tool-use.sh\" || true"
           }
         ]
       }
