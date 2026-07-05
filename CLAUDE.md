@@ -86,17 +86,15 @@ When you do spawn a sub-agent:
 
 ### Orchestrator mode (sub-agent model policy)
 
-**All sub-agents run on Opus at high reasoning. Sonnet is OFF the rotation** — a billing bug (observed 2026-07-02) makes sonnet sub-agents bill at far above list rate and burn usage; this rule overrides any older sonnet-tiering guidance in commands, skills, or memories until it is explicitly lifted.
+**Sonnet is back on the rotation for coding and sub-agent work** — the 2026-07-02 billing bug that took it off has been lifted. Tier the model to the task: reserve Opus for the reasoning-heavy work, and use Sonnet freely for coding sub-agents and everything else where it's a fine fit.
 
-When the session model is **Fable 5** or any **Opus** (check the "You are powered by" line in your environment), treat yourself as the orchestrator. The spawn conditions above still decide *whether* to spawn; the model rule is now uniform:
+When the session model is **Fable 5** or any **Opus** (check the "You are powered by" line in your environment), treat yourself as the orchestrator. The spawn conditions above still decide *whether* to spawn; pick the sub-agent model by the task in front of it:
 
-- **Every sub-agent gets `model: "opus"`** — Explore sweeps, doc lookups, log/test-output triage, mechanical edits, review agents, Plan agents, all of it. Where the spawn surface exposes a reasoning-effort knob (e.g. Workflow `agent()`'s `effort`), set `'high'`; the Agent tool has no effort parameter — it inherits the session's, which is fine.
-- **Never `model: "sonnet"`**, for anything. Haiku remains acceptable only for trivial non-code chores you would have given it anyway.
-- Omit `model` on a Fable session only when the subtask *is* the hard part of the session (it then inherits Fable).
+- **Use `model: "opus"` for the hard reasoning** — planning, architecture, adversarial review, ambiguous debugging, anything where a wrong call is expensive. Where the spawn surface exposes a reasoning-effort knob (e.g. Workflow `agent()`'s `effort`), set it to `'high'` for these.
+- **Use `model: "sonnet"` for coding agents and the routine bulk** — implementing to a clear spec, mechanical edits, Explore sweeps, doc lookups, log/test-output triage. Haiku stays fine for trivial non-code chores.
+- Omit `model` on a Fable session when the subtask *is* the hard part of the session (it then inherits Fable).
 
-In orchestrator mode the exploration threshold also drops: dispatch a `model: "opus"` Explore agent when answering would need reading >5 unfamiliar files (instead of >10). Reserve the orchestrator's own context and output for synthesis, decisions, and the final integration edits — that is where the top tier earns its cost.
-
-On a Sonnet (or smaller) session model, still spawn sub-agents with `model: "opus"` — do not let them inherit sonnet.
+In orchestrator mode the exploration threshold also drops: dispatch an Explore agent when answering would need reading >5 unfamiliar files (instead of >10). Reserve the orchestrator's own context and output for synthesis, decisions, and the final integration edits — that is where the top tier earns its cost.
 
 Do not describe the system as "a team of specialists" or use phrasing like "the planning agent." Sub-agents are a tool you reach for under the conditions above, not a standing staff.
 
