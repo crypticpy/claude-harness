@@ -7,7 +7,7 @@ set -euo pipefail
 # Installs system-level prerequisites and sidecar projects that
 # live outside ~/.claude but are referenced by the hook system:
 #   - Homebrew + tokf
-#   - npm-global cf-approve
+#   - npm-global cf-approve (+ LLM config from cf-approve-config.template.json)
 #   - claude-deck repo (private)  → ~/Projects/claude-deck
 #   - chorus / polyphony repo     → ~/Projects/chorus + `npm link`
 #   - Persists OPENROUTER_API_KEY / REF_API_KEY to ~/.zshrc
@@ -66,6 +66,24 @@ if command -v cf-approve >/dev/null 2>&1; then
     ok "cf-approve already on PATH"
 else
     npm install -g "$CF_APPROVE_PKG" && ok "cf-approve installed" || warn "cf-approve install failed (non-fatal — PermissionRequest hook will be skipped)"
+fi
+
+# Materialize cf-approve's LLM config (model, decision prompt) from the
+# repo template. The live config holds the OpenRouter key, so only the
+# sanitized template is tracked; never copy the live file back into the repo.
+CF_CONFIG_DIR="$HOME/.claude-code-fast-permission-hook"
+CF_CONFIG="$CF_CONFIG_DIR/config.json"
+CF_TEMPLATE="$HOME/.claude/cf-approve-config.template.json"
+if [[ -f "$CF_CONFIG" ]]; then
+    ok "cf-approve config already present (kept as-is)"
+elif [[ ! -f "$CF_TEMPLATE" ]]; then
+    warn "cf-approve-config.template.json missing — cf-approve will use its defaults"
+elif [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+    mkdir -p "$CF_CONFIG_DIR"
+    sed "s|__OPENROUTER_API_KEY__|${OPENROUTER_API_KEY}|" "$CF_TEMPLATE" > "$CF_CONFIG"
+    ok "cf-approve config materialized (Qwen via OpenRouter)"
+else
+    warn "OPENROUTER_API_KEY not set — cf-approve config skipped (re-run bootstrap after setting it)"
 fi
 
 # ── Stage 3: claude-deck sidecar repo ────────────────────────

@@ -130,7 +130,7 @@ No `--bootstrap` needed once tokf, cf-approve, and the sidecar repos are already
 
 | Variable             | Required            | Purpose                                                                 |
 | -------------------- | ------------------- | ----------------------------------------------------------------------- |
-| `OPENROUTER_API_KEY` | For chorus sidecar  | chorus/polyphony LLM access (the harness's own hooks no longer need it) |
+| `OPENROUTER_API_KEY` | For chorus + cf-approve | chorus/polyphony LLM access and the cf-approve decision LLM (the harness's own hooks no longer need it) |
 | `REF_API_KEY`        | Optional            | Ref MCP server access                                                   |
 
 ### External integrations
@@ -139,7 +139,7 @@ Referenced by hook commands; installed by `scripts/bootstrap-mac.sh` and detecte
 
 - **Claude Deck** (private repo `crypticpy/claude-deck`, installs to `~/.claude-deck/`) — visual dashboard hooks
 - **tokf** (Homebrew `mpecan/tokf/tokf`, data dir `~/Library/Application Support/tokf/`) — token-output filter
-- **cf-approve** (npm `@abdo-el-mobayad/claude-code-fast-permission-hook`) — fast permission decisions
+- **cf-approve** (npm `@abdo-el-mobayad/claude-code-fast-permission-hook`) — fast permission decisions. Its decision LLM is `qwen/qwen3.5-flash-02-23` via OpenRouter; bootstrap materializes `~/.claude-code-fast-permission-hook/config.json` from `cf-approve-config.template.json` (model + decision prompt tracked in the repo, API key injected from `OPENROUTER_API_KEY`)
 - **chorus / polyphony** (public repo `crypticpy/chorus`, package `@crypticpy/polyphony`) — MCP server for chat orchestration
 - **Formatters** (`black`, `gofmt`, `rustfmt`, `prettier`) — auto-format on edit (no auto-install)
 
