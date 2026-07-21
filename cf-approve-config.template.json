@@ -14,6 +14,13 @@
     "enabled": true,
     "level": "info"
   },
-  "customAllowPatterns": [],
+  "customAllowPatterns": [
+    "^(ls|pwd|whoami|date|printenv|which|type)\\b",
+    "^(cat|head|tail|wc|stat|file|du|df|tree|diff)\\b",
+    "^(grep|rg|find|fd)\\b",
+    "^git (status|diff|log|show|branch|remote|stash list|rev-parse|describe|blame)\\b",
+    "^(npm|pnpm|yarn) (test|run test)\\b",
+    "^npx (tsc|vitest run|prettier --check|eslint)\\b"
+  ],
   "customDenyPatterns": []
 }

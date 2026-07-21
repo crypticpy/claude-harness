@@ -68,6 +68,13 @@ else
     npm install -g "$CF_APPROVE_PKG" && ok "cf-approve installed" || warn "cf-approve install failed (non-fatal — PermissionRequest hook will be skipped)"
 fi
 
+# Apply local patches (error passthrough instead of cached denies,
+# normalized cache keys, Bash-aware customAllowPatterns).
+CF_PATCH_SCRIPT="$HOME/.claude/scripts/patch-cf-approve.sh"
+if command -v cf-approve >/dev/null 2>&1 && [[ -x "$CF_PATCH_SCRIPT" ]]; then
+    bash "$CF_PATCH_SCRIPT" && ok "cf-approve patches applied" || warn "cf-approve patch failed (non-fatal — upstream behavior remains)"
+fi
+
 # Materialize cf-approve's LLM config (model, decision prompt) from the
 # repo template. The live config holds the OpenRouter key, so only the
 # sanitized template is tracked; never copy the live file back into the repo.
