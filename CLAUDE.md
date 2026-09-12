@@ -128,6 +128,17 @@ Before implementing:
 - If something is unclear, stop. Name what's confusing. Ask.
 
 ### 2. Simplicity First
+## GitHub API budget
+
+GitHub rate limits are shared across every session. Shape each `gh` call to fetch only what the task needs; oversized shapes are gated behind a human `ask` in the permission rules, so a narrow query is also the fast path.
+
+- Ask for specific fields: `--json field1,field2` plus `--jq` on `gh` subcommands; explicit fields on GraphQL, never whole objects.
+- Keep `--limit` at or below 100 and `per_page`/`first:` at or below 100. Filter server-side (`--state`, `--label`, `--author`, `--search`) instead of pulling more rows and filtering locally.
+- No `--paginate` or `--slurp`. If one page is not enough, tighten the filter or ask the user before walking pages.
+- Never loop over `gh` (`for`, `while`, `xargs`, `parallel`). Batch with one GraphQL query using aliases, or one `gh api` call with a filter.
+- Avoid `search/*`, `/events`, `/stargazers`, `/forks`, `/contributors`, `/traffic/` unless the task is specifically about that data; they are the most expensive endpoints.
+- Check `gh api rate_limit` before any sweep across repos or projects, and stop if remaining is under 500.
+
 
 **Minimum code that solves the problem. Nothing speculative.**
 
