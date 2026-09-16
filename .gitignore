@@ -88,3 +88,20 @@ statusline-debug.sh
 
 # Chrome extension data
 chrome/
+
+# Sidecar runtime and secrets — never commit
+daemon/
+daemon.log
+security/
+jobs/
+image-cache/
+vendor/
+context-layer/events.jsonl
+context-layer/pre-compaction-state.json
+gh-pr-status-cache.json
+plugins/.last_inuse_sweep
+plugins/plugin-catalog-cache.json
+settings.json.*bak*
+settings.json.doctor-bak
+settings.json.pre-install*
+hooks/unified/*.bak*

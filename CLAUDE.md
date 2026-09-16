@@ -12,6 +12,8 @@ Priority when trade-offs arise: correctness > maintainability > performance > br
 
 ## MCP tooling
 
+> If the `Ref` or `context-layer` tools are not available in the current session, skip the corresponding rules below and use built-in tools instead.
+
 Two MCP servers are configured:
 
 - **`Ref`** (remote HTTP) — the standard documentation lookup path. Use for any question about a public library, framework, SDK, or API.
@@ -70,11 +72,25 @@ Read via `brain_search` when starting work on an unfamiliar area. Do not edit th
 
 ## Sub-agents
 
-Default is single-agent execution. Spawn a sub-agent only when one of these is true:
+### The brief test: do it yourself or hand it out?
 
-- The task has ≥3 independent workstreams that touch disjoint files (e.g., backend schema + frontend UI + tests) — dispatch one agent per workstream in parallel.
-- Exploration requires reading >10 files to build context — dispatch one `Explore` agent with a bounded question.
-- You are running `/freview` — that command spawns review agents by design.
+One rule decides: **if writing a good brief for the agent would take longer than doing the job, do the job.** Everything else goes to an agent. Concretely:
+
+| Do it yourself (in-line) | Hand to a sub-agent |
+|---|---|
+| A fix that fits in ≤3 edits with an obvious answer (a typo, a missing include, a one-line sed, a constant change) | A multi-file edit, or any edit where you'd need to read >3 files first |
+| One or two tool calls: a `git status`, a `gh` merge, a single grep, one build command | A build/test/gate loop that will need more than a couple of compile-fix rounds |
+| The decision itself: what to change, which trade-off to take, what to tell the user | Implementing a decision already made, to a spec you can state in a paragraph |
+| Reading a review report and deciding what to accept | Producing the review (adversarial review of a diff → Opus) |
+| The final integration edit that stitches agents' work together | A whole issue / PR / worklist item — one agent per issue, in its own worktree |
+| A sub-agent's brief (intent, constraints already decided, files it owns, output shape) | Investigation that would take >5 unfamiliar files to answer → `Explore` |
+| Anything the agent is barred from: commits, pushes, `gh` writes, touching the live gate | Applying a list of review findings (each item spelled out) → Sonnet |
+
+Signs you've got it wrong: you are on your fourth edit-build cycle in your own context (should have been an agent); or you are writing a 400-word brief for a two-line change (should have just done it). The cost being managed is the session model's context and attention, not wall-clock — an agent that takes 10 minutes but leaves your context clean for the decision is the better deal.
+
+When several agents can run, run them in parallel in one dispatch on disjoint files; sequence them only when files would overlap. A sub-agent's result comes back to you, not the user: read it, decide, and relay what matters.
+
+Model choice is in *Orchestrator mode* below. Oversight is proportional: a Sonnet coding agent gets its verification steps written into the brief (build, tests, gates) and reports the raw output; you check the output, not the diff line by line, unless the change touches auth, input handling, payments, or something the project constitution guards.
 
 When you do spawn a sub-agent:
 
@@ -96,6 +112,8 @@ When the session model is **Fable 5** or any **Opus** (check the "You are powere
 
 In orchestrator mode the exploration threshold also drops: dispatch an Explore agent when answering would need reading >5 unfamiliar files (instead of >10). Reserve the orchestrator's own context and output for synthesis, decisions, and the final integration edits — that is where the top tier earns its cost.
 
+**In a Fable/Opus session, delegation is the default, not the exception (user rule 2026-09-04).** Apply the brief test above with the thumb on the "hand it out" side: any implementation step, build/test/gate loop, PR-feedback drain, or investigation that would take more than a handful of tool calls goes to a sub-agent (Sonnet for coding and bulk, Opus for reasoning). Doing multi-file edits, compile-fix loops, or bot-thread triage in the orchestrator's own context is the failure mode this rule exists to stop. The exceptions are exactly the left-hand column of the table: the ≤3-edit fix, the single command, the decision, the brief, the integration edit, and the git/gh actions agents may not perform.
+
 Do not describe the system as "a team of specialists" or use phrasing like "the planning agent." Sub-agents are a tool you reach for under the conditions above, not a standing staff.
 
 ## Review gates
@@ -109,6 +127,17 @@ Do not describe the system as "a team of specialists" or use phrasing like "the 
 - Run `git status` before committing.
 - Ship completed work by default: when a logical unit is done and verified (tests/review gates passed, and the PR babysit cleared if the work went through a PR), push it — and run the project's deploy step if it has one you own — without stopping to ask. Stop and report only when something is wrong that you can't fix (failing tests, a deploy that won't converge, unexpected dirty state in the deploy target). Never force push.
 - Commit smartly as needed to keep all work well organized: commit each logical unit of work when it's complete and tested, one concern per commit, rather than letting large bodies of work pile up uncommitted or waiting to be asked.
+
+## GitHub API budget
+
+GitHub rate limits are shared across every session. Shape each `gh` call to fetch only what the task needs; oversized shapes are gated behind a human `ask` in the permission rules, so a narrow query is also the fast path.
+
+- Ask for specific fields: `--json field1,field2` plus `--jq` on `gh` subcommands; explicit fields on GraphQL, never whole objects.
+- Keep `--limit` at or below 100 and `per_page`/`first:` at or below 100. Filter server-side (`--state`, `--label`, `--author`, `--search`) instead of pulling more rows and filtering locally.
+- No `--paginate` or `--slurp`. If one page is not enough, tighten the filter or ask the user before walking pages.
+- Never loop over `gh` (`for`, `while`, `xargs`, `parallel`). Batch with one GraphQL query using aliases, or one `gh api` call with a filter.
+- Avoid `search/*`, `/events`, `/stargazers`, `/forks`, `/contributors`, `/traffic/` unless the task is specifically about that data; they are the most expensive endpoints.
+- Check `gh api rate_limit` before any sweep across repos or projects, and stop if remaining is under 500.
 
 ## Behavioral guidelines
 
@@ -128,17 +157,6 @@ Before implementing:
 - If something is unclear, stop. Name what's confusing. Ask.
 
 ### 2. Simplicity First
-## GitHub API budget
-
-GitHub rate limits are shared across every session. Shape each `gh` call to fetch only what the task needs; oversized shapes are gated behind a human `ask` in the permission rules, so a narrow query is also the fast path.
-
-- Ask for specific fields: `--json field1,field2` plus `--jq` on `gh` subcommands; explicit fields on GraphQL, never whole objects.
-- Keep `--limit` at or below 100 and `per_page`/`first:` at or below 100. Filter server-side (`--state`, `--label`, `--author`, `--search`) instead of pulling more rows and filtering locally.
-- No `--paginate` or `--slurp`. If one page is not enough, tighten the filter or ask the user before walking pages.
-- Never loop over `gh` (`for`, `while`, `xargs`, `parallel`). Batch with one GraphQL query using aliases, or one `gh api` call with a filter.
-- Avoid `search/*`, `/events`, `/stargazers`, `/forks`, `/contributors`, `/traffic/` unless the task is specifically about that data; they are the most expensive endpoints.
-- Check `gh api rate_limit` before any sweep across repos or projects, and stop if remaining is under 500.
-
 
 **Minimum code that solves the problem. Nothing speculative.**
 
@@ -200,3 +218,5 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+@RTK.md

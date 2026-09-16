@@ -160,11 +160,11 @@ else
     warn "Claude Deck not installed (hooks will be skipped at runtime)"
 fi
 
-# tokf
-if [[ -f "$HOME/Library/Application Support/tokf/hooks/pre-tool-use.sh" ]]; then
-    ok "tokf token tracker detected"
+# rtk
+if command -v rtk >/dev/null 2>&1; then
+    ok "rtk token proxy detected"
 else
-    warn "tokf not installed (Bash token hook will be skipped)"
+    warn "rtk not installed (Bash token hook will be skipped)"
 fi
 
 # Formatters
@@ -267,7 +267,7 @@ echo "    - First-party MCP servers (context-layer, Ref, chorus) registered"
 echo ""
 if ! $BOOTSTRAP; then
     echo "  Fresh Mac? Run: ./install.sh --bootstrap"
-    echo "  (installs tokf, cf-approve, claude-deck, chorus, writes env vars to ~/.zshrc)"
+    echo "  (installs rtk, cf-approve, claude-deck, chorus, writes env vars to ~/.zshrc)"
     echo ""
 fi
 echo "  Start a new Claude Code session to activate."

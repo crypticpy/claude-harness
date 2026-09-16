@@ -80,7 +80,7 @@ Stop             → quality gates, verification check, export-surface diff, fla
 
 ### Fresh Mac — end to end
 
-One-shot bootstrap that installs everything: harness, tokf, cf-approve, claude-deck, chorus/polyphony, MCP registrations, and shell env vars.
+One-shot bootstrap that installs everything: harness, rtk, cf-approve, claude-deck, chorus/polyphony, MCP registrations, and shell env vars.
 
 ```bash
 # Apple Command Line Tools + Homebrew + base CLI
@@ -101,7 +101,7 @@ cd ~/.claude
 
 `--bootstrap` runs `scripts/bootstrap-mac.sh` first, which:
 
-- `brew install mpecan/tokf/tokf` (token-output filter)
+- `brew install rtk` (token-output filter)
 - `npm i -g @abdo-el-mobayad/claude-code-fast-permission-hook` (provides `cf-approve`)
 - Clones `crypticpy/claude-deck` to `~/Projects/claude-deck` and runs its `./scripts/install.sh`
 - Clones `crypticpy/chorus` to `~/Projects/chorus`, runs `npm install`, then `npm link` (provides both `chorus` and `polyphony` on PATH)
@@ -124,7 +124,7 @@ After bootstrap, sign in to the claude.ai-hosted MCP servers from inside Claude 
 cd ~/.claude && git pull && ./install.sh
 ```
 
-No `--bootstrap` needed once tokf, cf-approve, and the sidecar repos are already present.
+No `--bootstrap` needed once rtk, cf-approve, and the sidecar repos are already present.
 
 ### Environment variables
 
@@ -138,7 +138,7 @@ No `--bootstrap` needed once tokf, cf-approve, and the sidecar repos are already
 Referenced by hook commands; installed by `scripts/bootstrap-mac.sh` and detected (but not installed) by `install.sh`:
 
 - **Claude Deck** (private repo `crypticpy/claude-deck`, installs to `~/.claude-deck/`) — visual dashboard hooks
-- **tokf** (Homebrew `mpecan/tokf/tokf`, data dir `~/Library/Application Support/tokf/`) — token-output filter
+- **rtk** (Homebrew `rtk`, data dir `~/Library/Application Support/rtk/`) — token-output filter
 - **cf-approve** (npm `@abdo-el-mobayad/claude-code-fast-permission-hook`) — fast permission decisions. Its decision LLM is `qwen/qwen3.5-flash-02-23` via OpenRouter; bootstrap materializes `~/.claude-code-fast-permission-hook/config.json` from `cf-approve-config.template.json` (model + decision prompt tracked in the repo, API key injected from `OPENROUTER_API_KEY`)
 - **chorus / polyphony** (public repo `crypticpy/chorus`, package `@crypticpy/polyphony`) — MCP server for chat orchestration
 - **Formatters** (`black`, `gofmt`, `rustfmt`, `prettier`) — auto-format on edit (no auto-install)

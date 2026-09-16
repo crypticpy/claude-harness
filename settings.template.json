@@ -114,6 +114,7 @@
       "Bash(ruby --version)",
       "Bash(java -version)",
       "Bash(git --version)",
+      "Bash(rtk *)",
       "Bash(gh --version)",
       "Bash(claude --version)",
       "Bash(brew --version)",
@@ -1153,7 +1154,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -x \"$HOME/Library/Application Support/tokf/hooks/pre-tool-use.sh\" ] && \"$HOME/Library/Application Support/tokf/hooks/pre-tool-use.sh\" || true"
+            "command": "rtk hook claude"
           }
         ]
       }

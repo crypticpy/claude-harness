@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Installs system-level prerequisites and sidecar projects that
 # live outside ~/.claude but are referenced by the hook system:
-#   - Homebrew + tokf
+#   - Homebrew + rtk
 #   - npm-global cf-approve (+ LLM config from cf-approve-config.template.json)
 #   - claude-deck repo (private)  → ~/Projects/claude-deck
 #   - chorus / polyphony repo     → ~/Projects/chorus + `npm link`
@@ -32,7 +32,7 @@ CHECK_ONLY=false
 PROJECTS_DIR="$HOME/Projects"
 CLAUDE_DECK_REPO="git@github.com:crypticpy/claude-deck.git"
 CHORUS_REPO="https://github.com/crypticpy/chorus.git"
-TOKF_FORMULA="mpecan/tokf/tokf"
+RTK_FORMULA="rtk"
 CF_APPROVE_PKG="@abdo-el-mobayad/claude-code-fast-permission-hook"
 
 # ── Stage 0: prereqs ─────────────────────────────────────────
@@ -52,12 +52,12 @@ fi
 
 mkdir -p "$PROJECTS_DIR"
 
-# ── Stage 1: tokf via Homebrew ───────────────────────────────
-info "Installing tokf (token-output filter)…"
-if brew list tokf >/dev/null 2>&1; then
-    ok "tokf already installed"
+# ── Stage 1: rtk via Homebrew ────────────────────────────────
+info "Installing rtk (token-output filter)…"
+if brew list rtk >/dev/null 2>&1; then
+    ok "rtk already installed"
 else
-    brew install "$TOKF_FORMULA" && ok "tokf installed" || warn "tokf install failed (non-fatal — hook will be skipped)"
+    brew install "$RTK_FORMULA" && ok "rtk installed" || warn "rtk install failed (non-fatal — hook will be skipped)"
 fi
 
 # ── Stage 2: cf-approve (npm global) ─────────────────────────
