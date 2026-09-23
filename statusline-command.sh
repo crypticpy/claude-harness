@@ -90,18 +90,6 @@ cat > "$CONTEXT_FILE" << EOF
 EOF
 fi
 
-# Also update Claude Deck state if it exists (only when we have real data)
-CLAUDE_DECK_STATE="$HOME/.claude-deck/state.json"
-if [ -f "$CLAUDE_DECK_STATE" ] && command -v jq &> /dev/null && [ "$ctx_tokens" -gt 0 ]; then
-    # Update context fields in claude-deck state
-    jq --argjson ctx_size "$context_size" \
-       --argjson ctx_used "$ctx_tokens" \
-       --argjson ctx_pct "$ctx_percent" \
-       --argjson cost "$session_cost" \
-       '.contextSize = $ctx_size | .contextUsed = $ctx_used | .contextPercent = $ctx_pct | .sessionCost = $cost' \
-       "$CLAUDE_DECK_STATE" > "${CLAUDE_DECK_STATE}.tmp" && mv "${CLAUDE_DECK_STATE}.tmp" "$CLAUDE_DECK_STATE"
-fi
-
 # Visual progress bar (10 chars wide)
 bar_width=10
 filled=$((ctx_percent * bar_width / 100))

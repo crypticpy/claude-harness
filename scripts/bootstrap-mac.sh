@@ -8,7 +8,6 @@ set -euo pipefail
 # live outside ~/.claude but are referenced by the hook system:
 #   - Homebrew + rtk
 #   - npm-global cf-approve (+ LLM config from cf-approve-config.template.json)
-#   - claude-deck repo (private)  → ~/Projects/claude-deck
 #   - chorus / polyphony repo     → ~/Projects/chorus + `npm link`
 #   - Persists OPENROUTER_API_KEY / REF_API_KEY to ~/.zshrc
 #
@@ -30,7 +29,6 @@ CHECK_ONLY=false
 [[ "${1:-}" == "--check" ]] && CHECK_ONLY=true
 
 PROJECTS_DIR="$HOME/Projects"
-CLAUDE_DECK_REPO="git@github.com:crypticpy/claude-deck.git"
 CHORUS_REPO="https://github.com/crypticpy/chorus.git"
 RTK_FORMULA="rtk"
 CF_APPROVE_PKG="@abdo-el-mobayad/claude-code-fast-permission-hook"
@@ -42,7 +40,7 @@ command -v brew >/dev/null 2>&1 || { error "Homebrew missing — install from ht
 command -v node >/dev/null 2>&1 || { error "Node missing — brew install node (need v20+)"; exit 1; }
 command -v npm  >/dev/null 2>&1 || { error "npm missing"; exit 1; }
 command -v git  >/dev/null 2>&1 || { error "git missing"; exit 1; }
-command -v gh   >/dev/null 2>&1 || { warn  "gh CLI missing — brew install gh (needed to clone private claude-deck)"; }
+command -v gh   >/dev/null 2>&1 || { warn  "gh CLI missing — brew install gh"; }
 ok "Prereqs present"
 
 if $CHECK_ONLY; then
@@ -93,31 +91,7 @@ else
     warn "OPENROUTER_API_KEY not set — cf-approve config skipped (re-run bootstrap after setting it)"
 fi
 
-# ── Stage 3: claude-deck sidecar repo ────────────────────────
-info "Bootstrapping claude-deck…"
-DECK_DIR="$PROJECTS_DIR/claude-deck"
-if [[ -d "$DECK_DIR/.git" ]]; then
-    ok "claude-deck repo already at $DECK_DIR"
-elif command -v gh >/dev/null 2>&1; then
-    if gh repo clone crypticpy/claude-deck "$DECK_DIR" 2>&1; then
-        ok "claude-deck cloned"
-    else
-        warn "claude-deck clone failed — check gh auth (gh auth status)"
-    fi
-else
-    warn "Skipping claude-deck (no gh CLI to clone private repo)"
-fi
-
-if [[ -d "$DECK_DIR" && ! -d "$HOME/.claude-deck" ]]; then
-    info "Running claude-deck installer…"
-    (cd "$DECK_DIR" && npm install --silent && bash ./scripts/install.sh) \
-        && ok "claude-deck installed" \
-        || warn "claude-deck installer failed (non-fatal)"
-elif [[ -d "$HOME/.claude-deck" ]]; then
-    ok "claude-deck already installed (~/.claude-deck exists)"
-fi
-
-# ── Stage 4: chorus / polyphony sidecar repo ─────────────────
+# ── Stage 3: chorus / polyphony sidecar repo ─────────────────
 info "Bootstrapping chorus/polyphony…"
 CHORUS_DIR="$PROJECTS_DIR/chorus"
 if [[ -d "$CHORUS_DIR/.git" ]]; then
@@ -139,7 +113,7 @@ elif command -v polyphony >/dev/null 2>&1 || command -v chorus >/dev/null 2>&1; 
     ok "chorus/polyphony already linked on PATH"
 fi
 
-# ── Stage 5: persist env vars to ~/.zshrc ────────────────────
+# ── Stage 4: persist env vars to ~/.zshrc ────────────────────
 info "Persisting required env vars to ~/.zshrc…"
 ZRC="$HOME/.zshrc"
 touch "$ZRC"
@@ -161,7 +135,7 @@ persist_env() {
 persist_env OPENROUTER_API_KEY
 persist_env REF_API_KEY
 
-# ── Stage 6: summary ─────────────────────────────────────────
+# ── Stage 5: summary ─────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║  Bootstrap complete                          ║"

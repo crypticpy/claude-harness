@@ -80,14 +80,14 @@ Stop             → quality gates, verification check, export-surface diff, fla
 
 ### Fresh Mac — end to end
 
-One-shot bootstrap that installs everything: harness, rtk, cf-approve, claude-deck, chorus/polyphony, MCP registrations, and shell env vars.
+One-shot bootstrap that installs everything: harness, rtk, cf-approve, chorus/polyphony, MCP registrations, and shell env vars.
 
 ```bash
 # Apple Command Line Tools + Homebrew + base CLI
 xcode-select --install
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install node gh
-gh auth login                        # needed to clone private claude-deck repo
+gh auth login
 
 # Required env vars (these get persisted to ~/.zshrc by --bootstrap)
 export OPENROUTER_API_KEY=sk-or-...
@@ -103,7 +103,6 @@ cd ~/.claude
 
 - `brew install rtk` (token-output filter)
 - `npm i -g @abdo-el-mobayad/claude-code-fast-permission-hook` (provides `cf-approve`)
-- Clones `crypticpy/claude-deck` to `~/Projects/claude-deck` and runs its `./scripts/install.sh`
 - Clones `crypticpy/chorus` to `~/Projects/chorus`, runs `npm install`, then `npm link` (provides both `chorus` and `polyphony` on PATH)
 - Appends `OPENROUTER_API_KEY` and `REF_API_KEY` to `~/.zshrc` if set in the current shell and not already present
 
@@ -137,7 +136,6 @@ No `--bootstrap` needed once rtk, cf-approve, and the sidecar repos are already 
 
 Referenced by hook commands; installed by `scripts/bootstrap-mac.sh` and detected (but not installed) by `install.sh`:
 
-- **Claude Deck** (private repo `crypticpy/claude-deck`, installs to `~/.claude-deck/`) — visual dashboard hooks
 - **rtk** (Homebrew `rtk`, data dir `~/Library/Application Support/rtk/`) — token-output filter
 - **cf-approve** (npm `@abdo-el-mobayad/claude-code-fast-permission-hook`) — fast permission decisions. Its decision LLM is `qwen/qwen3.5-flash-02-23` via OpenRouter; bootstrap materializes `~/.claude-code-fast-permission-hook/config.json` from `cf-approve-config.template.json` (model + decision prompt tracked in the repo, API key injected from `OPENROUTER_API_KEY`)
 - **chorus / polyphony** (public repo `crypticpy/chorus`, package `@crypticpy/polyphony`) — MCP server for chat orchestration

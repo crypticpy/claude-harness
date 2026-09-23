@@ -55,4 +55,4 @@ Markdown files with YAML frontmatter. The harness doesn't validate them at insta
 
 - Auto-format on edit is **disabled** (`formatting.enabled: false` in `config.json`) — the PostToolUse hook runs read-only lint instead. Run formatters manually (`npx prettier --write` for the plugin, which has a prettier config).
 - `CLAUDE.md` at this repo's root is the **global** Claude Code instructions file. It loads in every project on this machine — don't put harness-specific content there.
-- `claude-deck` and `rtk` hooks are referenced in `settings.template.json` but live outside this repo. They are optional; their absence is non-fatal because each invocation is its own shell command and failure is swallowed.
+- `rtk` hooks are referenced in `settings.template.json` but live outside this repo. They are optional; their absence is non-fatal because each invocation is its own shell command and failure is swallowed.

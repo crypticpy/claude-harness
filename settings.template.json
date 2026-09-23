@@ -1091,10 +1091,6 @@
           {
             "type": "command",
             "command": "cf-approve permission"
-          },
-          {
-            "type": "command",
-            "command": "$HOME/.claude-deck/hooks/claude-deck-hook.sh permission \"$TOOL_NAME\""
           }
         ]
       }
@@ -1117,15 +1113,6 @@
             "command": "node $HOME/.claude/hooks/unified/unified-hook.mjs post-tool"
           }
         ]
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude-deck/hooks/claude-deck-hook.sh tool-complete"
-          }
-        ]
       }
     ],
     "PreCompact": [
@@ -1140,15 +1127,6 @@
       }
     ],
     "PreToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude-deck/hooks/claude-deck-hook.sh tool-use \"$TOOL_NAME\""
-          }
-        ]
-      },
       {
         "matcher": "Bash",
         "hooks": [
@@ -1177,10 +1155,6 @@
           {
             "type": "command",
             "command": "node $HOME/.claude/hooks/unified/unified-hook.mjs stop"
-          },
-          {
-            "type": "command",
-            "command": "$HOME/.claude-deck/hooks/claude-deck-hook.sh status idle"
           }
         ]
       }
@@ -1196,10 +1170,6 @@
           {
             "type": "command",
             "command": "bash $HOME/.claude/plugins/context-layer/bin/personality-hook.sh"
-          },
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude-deck/hooks/claude-deck-hook.sh prompt-submit"
           }
         ]
       }

@@ -153,13 +153,6 @@ fi
 # ── Check optional integrations ──────────────────────────────
 info "Checking optional integrations..."
 
-# Claude Deck
-if [[ -d "$HOME/.claude-deck" ]]; then
-    ok "Claude Deck detected"
-else
-    warn "Claude Deck not installed (hooks will be skipped at runtime)"
-fi
-
 # rtk
 if command -v rtk >/dev/null 2>&1; then
     ok "rtk token proxy detected"
@@ -267,7 +260,7 @@ echo "    - First-party MCP servers (context-layer, Ref, chorus) registered"
 echo ""
 if ! $BOOTSTRAP; then
     echo "  Fresh Mac? Run: ./install.sh --bootstrap"
-    echo "  (installs rtk, cf-approve, claude-deck, chorus, writes env vars to ~/.zshrc)"
+    echo "  (installs rtk, cf-approve, chorus, writes env vars to ~/.zshrc)"
     echo ""
 fi
 echo "  Start a new Claude Code session to activate."
