@@ -13,7 +13,6 @@ c_warning='\e[38;2;229;192;123m'    # #E5C07B - yellow/gold
 c_error='\e[38;2;224;108;117m'      # #E06C75 - red
 c_success='\e[38;2;80;250;123m'     # #50FA7B - bright green (Dracula)
 c_symbol='\e[38;2;198;120;221m'     # #C678DD - purple
-c_cost='\e[38;2;86;182;194m'        # #56B6C2 - cyan
 c_dim='\e[38;2;90;90;90m'           # dark gray - empty bar
 
 # Extract JSON values
@@ -114,8 +113,36 @@ for ((i=0; i<filled; i++)); do bar_filled+="█"; done
 for ((i=0; i<empty; i++)); do bar_empty+="░"; done
 context_bar="${bar_color}${bar_filled}${c_dim}${bar_empty}${c_reset} ${ctx_k}k/${compaction_k}k (${ctx_percent}%)"
 
-# Session cost display (session_cost already extracted above)
-cost_display=$(printf '$%.2f' "$session_cost")
+# Plan usage limits (subscription only; absent for API-key sessions)
+# Color: green <60%, yellow <85%, red 85%+
+usage_color() {
+  if [ "$1" -ge 85 ]; then printf '%s' "$c_error"
+  elif [ "$1" -ge 60 ]; then printf '%s' "$c_warning"
+  else printf '%s' "$c_success"; fi
+}
+usage_info=""
+five_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+five_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+week_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+week_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+if [ -n "$five_pct" ]; then
+  five_pct=${five_pct%.*}
+  five_left=""
+  if [ -n "$five_reset" ]; then
+    secs_left=$(( ${five_reset%.*} - $(date +%s) ))
+    if [ "$secs_left" -gt 0 ]; then
+      five_left=" ${c_dim}↻$((secs_left / 3600))h$(( (secs_left % 3600) / 60 ))m"
+    fi
+  fi
+  usage_info="${c_muted}5h $(usage_color "$five_pct")${five_pct}%${five_left}${c_reset}"
+fi
+if [ -n "$week_pct" ]; then
+  week_pct=${week_pct%.*}
+  week_day=""
+  [ -n "$week_reset" ] && week_day=" ${c_dim}↻$(date -r "${week_reset%.*}" '+%a %-I%p' | sed 's/AM$/am/;s/PM$/pm/')"
+  [ -n "$usage_info" ] && usage_info+="  "
+  usage_info+="${c_muted}7d $(usage_color "$week_pct")${week_pct}%${week_day}${c_reset}"
+fi
 
 # Time elapsed
 duration_ms=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
@@ -191,13 +218,14 @@ if [ -d "$cwd/.git" ] || git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; the
 fi
 
 # Build status line with clear spacing
-# Format: path | git | context | model | cost | time | tools
-printf "%b%b  %b  %b  %b  %b  %b  %b" \
+# Format: path | git | context | model | usage | time | tools
+[ -n "$usage_info" ] && usage_info+="  "
+printf "%b%b  %b  %b  %b  %b%b  %b" \
   "$ssh_info" \
   "$path_display" \
   "$git_info" \
   "$context_bar" \
   "${c_symbol}${model}${c_reset}" \
-  "${c_cost}${cost_display}${c_reset}" \
+  "$usage_info" \
   "${c_muted}${time_info}${c_reset}" \
   "${c_muted}tools:${c_accent}${tool_count}${c_reset}"
