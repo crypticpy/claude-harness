@@ -41,7 +41,8 @@ eval "$(echo "$input" | jq -r '
   @sh "cache_warm=\(.prompt_cache.warm // false)",
   @sh "cache_expires=\(.prompt_cache.expires_at | n)",
   @sh "cache_requests=\(.prompt_cache.requests | n)",
-  @sh "cache_recache=\(.prompt_cache.recache_tokens_if_cold | n)"
+  @sh "cache_recache=\(.prompt_cache.recache_tokens_if_cold | n)",
+  @sh "cache_ttl=\(.prompt_cache.ttl // "")"
 ')"
 [ -z "$cwd" ] && cwd=$(pwd)
 now=$(date +%s)
@@ -264,6 +265,14 @@ if [ "$cache_requests" -gt 0 ]; then
       cache_color="$c_warning"
       [ "$cache_left" -le 120 ] && cache_color="$c_error"
       cache_info="  ${cache_color}cache $(( (cache_left + 59) / 60 ))m${c_reset}"
+    fi
+    # Keep-warm: in the last 5 minutes of a 1h cache, hand off to the one-shot
+    # pinger (Superset terminals only; it decides whether the session still
+    # deserves a ping). Detached so the status line never waits on it.
+    if [ "$cache_left" -le 300 ] && [ "$cache_ttl" = "1h" ] && [ -n "$SUPERSET_TERMINAL_ID" ] \
+        && [ ! -e "${TMPDIR:-/tmp}/claude-keepwarm/$session_id.$cache_expires" ]; then
+      ( bash "$HOME/.claude/scripts/cache-keepwarm.sh" "$session_id" "$transcript_path" "$cache_expires" \
+          </dev/null >/dev/null 2>&1 & )
     fi
   else
     cache_info="  ${c_error}cache cold${c_muted} ~$(( cache_recache / 1000 ))k${c_reset}"
