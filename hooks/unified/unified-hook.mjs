@@ -62,8 +62,8 @@ async function main() {
         switch (eventType) {
             case 'pre-bash': {
                 // PreToolUse on Bash: runs on EVERY shell call, so load only the
-                // command-redirect module. Prints a deny decision (JSON) for
-                // over-budget gh shapes and credential reads; nothing otherwise.
+                // command-redirect module. Prints a deny decision (JSON) with
+                // guidance for [secrets]/[gh-budget]/[guarded] commands; nothing otherwise.
                 try {
                     const redirect = await loadModule('command-redirect');
                     const decision = redirect.checkCommand(event);
