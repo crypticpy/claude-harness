@@ -140,6 +140,18 @@ GitHub rate limits are shared across every session. Shape each `gh` call to fetc
 - Avoid `search/*`, `/events`, `/stargazers`, `/forks`, `/contributors`, `/traffic/` unless the task is specifically about that data; they are the most expensive endpoints.
 - Check `gh api rate_limit` before any sweep across repos or projects, and stop if remaining is under 500.
 
+## Command guardrails
+
+There are no permission prompts. A `pre-bash` hook denies risky Bash commands with a reason prefixed `[guarded]`, `[secrets]` or `[gh-budget]`. The denial is final: read the reason, use the safer route it names, and don't retry the original or get the same effect another way (python, node, a script file, `find -exec`). These are always denied, so reach for the alternative first:
+
+- Recursive delete (`rm -r`, `find -delete`, `rimraf`, `shutil.rmtree`) → `trash <path>`.
+- Discarding work (`git reset --hard`, `checkout .`, `restore <file>`, `clean -f`, `stash drop`, `branch -D`) → `git stash push -u -m "<why>"`, `git branch -d`.
+- Force push or `push --tags` → push a new branch, or `git push origin <tag>`.
+- Printing credentials (credential files, `gh auth token`) → `gh auth status`, `jq 'keys' <file>`, `grep -c <key> <file>`.
+- Publishing, global installs, `sudo`, `kill`, system config, `claude mcp/plugin/config` changes, infra writes → use `npx`/`uvx`/a venv, `terraform plan`, `kubectl diff`; otherwise it's a user action.
+
+When a step truly needs a denied command, add `User action: run \`<cmd>\` because <why>` to your final report and carry on with the rest of the task.
+
 ## Behavioral guidelines
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
