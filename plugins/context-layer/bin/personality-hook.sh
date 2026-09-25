@@ -13,6 +13,10 @@ PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 # Run the personality hook
-node "$HOME/.claude/plugins/context-layer/dist/hooks/personality.js" <<EOF
+# Pin Node v24: better-sqlite3 is built for it, and GUI-launched sessions may
+# otherwise resolve Homebrew's newer node from PATH.
+NODE="$HOME/.local/bin/node"
+[ -x "$NODE" ] || NODE=node
+"$NODE" "$HOME/.claude/plugins/context-layer/dist/hooks/personality.js" <<EOF
 $INPUT
 EOF
