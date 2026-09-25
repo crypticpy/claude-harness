@@ -84,13 +84,13 @@ One rule decides: **if writing a good brief for the agent would take longer than
 | Reading a review report and deciding what to accept | Producing the review (adversarial review of a diff → Opus) |
 | The final integration edit that stitches agents' work together | A whole issue / PR / worklist item — one agent per issue, in its own worktree |
 | A sub-agent's brief (intent, constraints already decided, files it owns, output shape) | Investigation that would take >5 unfamiliar files to answer → `Explore` |
-| Anything the agent is barred from: commits, pushes, `gh` writes, touching the live gate | Applying a list of review findings (each item spelled out) → Sonnet |
+| Anything the agent is barred from: commits, pushes, `gh` writes, touching the live gate | Applying a list of review findings (each item spelled out) → Opus (`opus-general`) |
 
 Signs you've got it wrong: you are on your fourth edit-build cycle in your own context (should have been an agent); or you are writing a 400-word brief for a two-line change (should have just done it). The cost being managed is the session model's context and attention, not wall-clock — an agent that takes 10 minutes but leaves your context clean for the decision is the better deal.
 
 When several agents can run, run them in parallel in one dispatch on disjoint files; sequence them only when files would overlap. A sub-agent's result comes back to you, not the user: read it, decide, and relay what matters.
 
-Model choice is in *Orchestrator mode* below. Oversight is proportional: a Sonnet coding agent gets its verification steps written into the brief (build, tests, gates) and reports the raw output; you check the output, not the diff line by line, unless the change touches auth, input handling, payments, or something the project constitution guards.
+Model choice is in *Orchestrator mode* below. Oversight is proportional: a coding agent gets its verification steps written into the brief (build, tests, gates) and reports the raw output; you check the output, not the diff line by line, unless the change touches auth, input handling, payments, or something the project constitution guards.
 
 When you do spawn a sub-agent:
 
@@ -102,17 +102,18 @@ When you do spawn a sub-agent:
 
 ### Orchestrator mode (sub-agent model policy)
 
-**Sonnet is back on the rotation for coding and sub-agent work** — the 2026-07-02 billing bug that took it off has been lifted. Tier the model to the task: reserve Opus for the reasoning-heavy work, and use Sonnet freely for coding sub-agents and everything else where it's a fine fit.
+**Opus at high effort is the default sub-agent (user rule, experiment started 2026-09-16 17:40 CDT).** The aim is fewer review rounds and fewer total tokens: an agent that gets a fix right the first time is cheaper than a cheaper agent that needs three more rounds.
 
-When the session model is **Fable 5** or any **Opus** (check the "You are powered by" line in your environment), treat yourself as the orchestrator. The spawn conditions above still decide *whether* to spawn; pick the sub-agent model by the task in front of it:
+When the session model is **Fable 5** or any **Opus** (check the "You are powered by" line in your environment), treat yourself as the orchestrator. The spawn conditions above still decide *whether* to spawn. Pick the sub-agent like this:
 
-- **Use `model: "opus"` for the hard reasoning** — planning, architecture, adversarial review, ambiguous debugging, anything where a wrong call is expensive. Where the spawn surface exposes a reasoning-effort knob (e.g. Workflow `agent()`'s `effort`), set it to `'high'` for these.
-- **Use `model: "sonnet"` for coding agents and the routine bulk** — implementing to a clear spec, mechanical edits, Explore sweeps, doc lookups, log/test-output triage. Haiku stays fine for trivial non-code chores.
-- Omit `model` on a Fable session when the subtask *is* the hard part of the session (it then inherits Fable).
+- **Default: the `opus-general` agent** (`~/.claude/agents/opus-general.md`: Opus, `effort: high`). Use it for coding, fixing review findings, debugging, investigation, planning, and adversarial review. If that agent type is not listed in the session, use `general-purpose` with `model: "opus"`. Wherever a spawn surface exposes a reasoning-effort knob (e.g. Workflow `agent()`'s `effort`), set it to `'high'`.
+- **Sonnet (`model: "sonnet"`) only for light, low-logic work.** That means documentation edits, bulk mechanical file changes, simple lookups and log triage. Never use Sonnet for a fix that needs judgment, or for a follow-up round on review findings. Haiku stays fine for trivial non-code chores.
+- **Fable only for architecture, engineering and design reviews.** Omit `model` on a Fable session only when the subtask *is* the hard part of the session (it then inherits Fable).
+- **A new round on work a Sonnet agent built goes to a fresh Opus agent with the full brief.** Don't resume the Sonnet agent for it.
 
 In orchestrator mode the exploration threshold also drops: dispatch an Explore agent when answering would need reading >5 unfamiliar files (instead of >10). Reserve the orchestrator's own context and output for synthesis, decisions, and the final integration edits — that is where the top tier earns its cost.
 
-**In a Fable/Opus session, delegation is the default, not the exception (user rule 2026-09-04).** Apply the brief test above with the thumb on the "hand it out" side: any implementation step, build/test/gate loop, PR-feedback drain, or investigation that would take more than a handful of tool calls goes to a sub-agent (Sonnet for coding and bulk, Opus for reasoning). Doing multi-file edits, compile-fix loops, or bot-thread triage in the orchestrator's own context is the failure mode this rule exists to stop. The exceptions are exactly the left-hand column of the table: the ≤3-edit fix, the single command, the decision, the brief, the integration edit, and the git/gh actions agents may not perform.
+**In a Fable/Opus session, delegation is the default, not the exception (user rule 2026-09-04).** Apply the brief test above with the thumb on the "hand it out" side: any implementation step, build/test/gate loop, PR-feedback drain, or investigation that would take more than a handful of tool calls goes to a sub-agent (Opus at high effort by default; Sonnet only for light, low-logic chores). Doing multi-file edits, compile-fix loops, or bot-thread triage in the orchestrator's own context is the failure mode this rule exists to stop. The exceptions are exactly the left-hand column of the table: the ≤3-edit fix, the single command, the decision, the brief, the integration edit, and the git/gh actions agents may not perform.
 
 Do not describe the system as "a team of specialists" or use phrasing like "the planning agent." Sub-agents are a tool you reach for under the conditions above, not a standing staff.
 
