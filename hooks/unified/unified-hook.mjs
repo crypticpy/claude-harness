@@ -60,6 +60,20 @@ async function main() {
         }
 
         switch (eventType) {
+            case 'pre-bash': {
+                // PreToolUse on Bash: runs on EVERY shell call, so load only the
+                // command-redirect module. Prints a deny decision (JSON) for
+                // over-budget gh shapes and credential reads; nothing otherwise.
+                try {
+                    const redirect = await loadModule('command-redirect');
+                    const decision = redirect.checkCommand(event);
+                    if (decision) console.log(JSON.stringify(decision));
+                } catch (e) {
+                    if (process.env.DEBUG) console.error('[command-redirect]', e);
+                }
+                break;
+            }
+
             case 'prompt': {
                 // UserPromptSubmit: context-report + skill-activation + session-memory inject + edit-history
                 const modules = await Promise.all([

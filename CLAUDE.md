@@ -131,7 +131,7 @@ Do not describe the system as "a team of specialists" or use phrasing like "the 
 
 ## GitHub API budget
 
-GitHub rate limits are shared across every session. Shape each `gh` call to fetch only what the task needs; oversized shapes are gated behind a human `ask` in the permission rules, so a narrow query is also the fast path.
+GitHub rate limits are shared across every session. Shape each `gh` call to fetch only what the task needs; oversized shapes (loops over `gh`, pagination, limits over 100, search and other expensive endpoints) are denied by the `pre-bash` hook with a reason, so rewrite the command into a narrow shape and retry.
 
 - Ask for specific fields: `--json field1,field2` plus `--jq` on `gh` subcommands; explicit fields on GraphQL, never whole objects.
 - Keep `--limit` at or below 100 and `per_page`/`first:` at or below 100. Filter server-side (`--state`, `--label`, `--author`, `--search`) instead of pulling more rows and filtering locally.
